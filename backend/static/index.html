@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实验室安全智能巡检与违规预警系统</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+:root{--primary:#1f6feb;--danger:#e5484d;--warn:#f59e0b;--ok:#2ea043;--bg:#f5f7fa;--card:#fff;--text:#1f2328;--muted:#6a737d;--border:#e4e7eb}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Microsoft YaHei","Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+header{background:linear-gradient(135deg,#17325c,#1f6feb);color:#fff;padding:16px 28px;display:flex;align-items:center;gap:14px}
+header h1{font-size:19px;font-weight:600}
+header .sub{font-size:12px;opacity:.75}
+nav{background:var(--card);border-bottom:1px solid var(--border);display:flex;padding:0 28px;gap:6px}
+nav button{border:none;background:none;padding:13px 20px;font-size:14px;cursor:pointer;color:var(--muted);border-bottom:2.5px solid transparent}
+nav button.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+main{max-width:1240px;margin:22px auto;padding:0 24px}
+.card{background:var(--card);border-radius:10px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:18px}
+.card h3{font-size:15px;margin-bottom:14px;color:#24292f}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.stat{background:var(--card);border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.stat .num{font-size:30px;font-weight:700;margin:6px 0 2px}
+.stat .label{font-size:13px;color:var(--muted)}
+.stat.red .num{color:var(--danger)} .stat.blue .num{color:var(--primary)} .stat.green .num{color:var(--ok)} .stat.orange .num{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+th{background:#f6f8fa;font-weight:600;color:var(--muted)}
+.badge{display:inline-block;padding:2px 9px;border-radius:11px;font-size:12px}
+.badge.major{background:#fdebebeb;color:var(--danger)}
+.badge.minor{background:#fff5e0;color:#b06f0a}
+.badge.ok{background:#e6f4ea;color:var(--ok)}
+.btn{background:var(--primary);color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:14px;cursor:pointer}
+.btn:hover{opacity:.9}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.ghost{background:#fff;color:var(--primary);border:1px solid var(--primary)}
+.btn.danger{background:var(--danger)}
+input,select{padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;background:#fff}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+label{font-size:13px;color:var(--muted)}
+#resultImg,#resultVideo{max-width:100%;border-radius:8px;border:1px solid var(--border)}
+.thumb{width:86px;height:52px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer}
+.loading{color:var(--muted);font-size:13px;padding:10px 0}
+.hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7}
+.chart{width:100%;height:320px}
+.ppechk{display:flex;gap:14px;margin:8px 0}
+.ppechk label{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text)}
+.section{margin-bottom:20px}
+</style>
+</head>
+<body>
+<header>
+  <div style="font-size:26px">🛡️</div>
+  <div>
+    <h1>实验室安全智能巡检与违规预警系统</h1>
+    <div class="sub">Laboratory Safety Intelligent Inspection and Violation Warning System · MVP v0.1</div>
+  </div>
+</header>
+<nav>
+  <button class="active" data-tab="dashboard">📊 首页 Dashboard</button>
+  <button data-tab="inspect">🔍 智能巡检</button>
+  <button data-tab="violations">📋 违规记录</button>
+  <button data-tab="stats">📈 数据统计</button>
+  <button data-tab="settings">⚙️ 系统设置</button>
+</nav>
+<main>
+
+<!-- Dashboard -->
+<section id="tab-dashboard">
+  <div class="grid">
+    <div class="stat blue"><div class="label">今日检测次数</div><div class="num" id="d-det">-</div></div>
+    <div class="stat red"><div class="label">今日违规次数</div><div class="num" id="d-vio">-</div></div>
+    <div class="stat green"><div class="label">今日正常次数</div><div class="num" id="d-nor">-</div></div>
+    <div class="stat orange"><div class="label">今日违规率</div><div class="num" id="d-rate">-</div></div>
+  </div>
+  <div class="card" style="margin-top:18px"><h3>今日违规类型统计</h3><div id="d-chart" class="chart"></div></div>
+</section>
+
+<!-- 智能巡检 -->
+<section id="tab-inspect" style="display:none">
+  <div class="card">
+    <h3>上传检测</h3>
+    <div class="row">
+      <label>实验室</label><select id="i-lab"></select>
+      <label>文件</label><input type="file" id="i-file" accept="image/*,video/mp4,video/avi">
+      <button class="btn" id="i-run" onclick="runInspect()">开始检测</button>
+      <span class="loading" id="i-status"></span>
+    </div>
+    <div class="hint">支持 JPG/PNG 图片与 MP4 视频。视频中蓝色矩形为"实验操作区"（可在系统设置中配置），只有进入该区域的人员才进行 PPE 违规判断。人员框：绿色=合规，橙色=一般违规，红色=严重违规。</div>
+  </div>
+  <div class="card" id="i-result-card" style="display:none">
+    <h3>检测结果</h3>
+    <div id="i-media"></div>
+    <div id="i-summary" style="margin:14px 0"></div>
+    <table id="i-persons"><thead><tr><th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>违规类型</th><th>严重程度</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<!-- 违规记录 -->
+<section id="tab-violations" style="display:none">
+  <div class="card">
+    <h3>违规记录查询</h3>
+    <div class="row">
+      <label>违规类型</label>
+      <select id="v-type"><option value="">全部</option><option>未佩戴口罩</option><option>未佩戴手套</option><option>未穿实验服</option><option>未佩戴护目镜</option><option>未佩戴安全帽</option></select>
+      <label>严重程度</label>
+      <select id="v-sev"><option value="">全部</option><option>一般违规</option><option>严重违规</option></select>
+      <label>日期</label><input type="date" id="v-date">
+      <button class="btn" onclick="loadViolations()">查询</button>
+    </div>
+    <table><thead><tr><th>时间</th><th>实验室</th><th>区域</th><th>人员</th><th>违规类型</th><th>严重程度</th><th>视频内时间</th><th>截图</th></tr></thead>
+    <tbody id="v-body"></tbody></table>
+    <div class="hint" id="v-count"></div>
+  </div>
+</section>
+
+<!-- 数据统计 -->
+<section id="tab-stats" style="display:none">
+  <div class="card"><h3>每日违规次数（近30天）</h3><div id="s-day" class="chart"></div></div>
+  <div class="card"><h3>各类违规数量</h3><div id="s-type" class="chart"></div></div>
+  <div class="card"><h3>评估结果比例</h3><div id="s-ratio" class="chart"></div></div>
+</section>
+
+<!-- 系统设置 -->
+<section id="tab-settings" style="display:none">
+  <div class="card">
+    <h3>新建实验室</h3>
+    <div class="row"><label>名称</label><input id="s-labname" placeholder="例如：实验室B"><label>说明</label><input id="s-labdesc" style="width:260px"><button class="btn" onclick="createLab()">创建</button></div>
+  </div>
+  <div class="card">
+    <h3>检测区域配置（矩形 ROI，坐标为 0~1 归一化比例）</h3>
+    <div class="row">
+      <label>实验室</label><select id="s-lab" onchange="renderAreas()"></select>
+      <label>区域名称</label><input id="s-areaname" placeholder="例如：通风橱操作区">
+      <label>X1</label><input id="s-x1" type="number" step="0.01" value="0.25" style="width:70px">
+      <label>Y1</label><input id="s-y1" type="number" step="0.01" value="0.20" style="width:70px">
+      <label>X2</label><input id="s-x2" type="number" step="0.01" value="0.85" style="width:70px">
+      <label>Y2</label><input id="s-y2" type="number" step="0.01" value="0.90" style="width:70px">
+    </div>
+    <div class="row"><label>必须佩戴：</label>
+      <span class="ppechk">
+        <label><input type="checkbox" class="s-ppe" value="mask" checked>口罩</label>
+        <label><input type="checkbox" class="s-ppe" value="gloves" checked>手套</label>
+        <label><input type="checkbox" class="s-ppe" value="lab_coat" checked>实验服</label>
+        <label><input type="checkbox" class="s-ppe" value="goggles">护目镜</label>
+        <label><input type="checkbox" class="s-ppe" value="helmet">安全帽</label>
+      </span>
+      <button class="btn" onclick="createArea()">创建区域</button>
+    </div>
+    <table><thead><tr><th>区域ID</th><th>名称</th><th>ROI</th><th>必须佩戴</th><th>操作</th></tr></thead><tbody id="s-areas"></tbody></table>
+    <div class="hint">提示：上传检测页面选中的实验室若没有配置任何区域，则所有人员都视为处于"普通区域"，不会触发 PPE 违规判断。</div>
+  </div>
+</section>
+</main>
+
+<div id="lightbox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:99;justify-content:center;align-items:center;cursor:zoom-out" onclick="this.style.display='none'">
+  <img id="lightboxImg" style="max-width:92%;max-height:92%">
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const api=window.location.origin;
+
+/* ---------- Tab 切换 ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('main section').forEach(x=>x.style.display='none');
+  b.classList.add('active');
+  $('tab-'+b.dataset.tab).style.display='block';
+  if(b.dataset.tab==='dashboard')loadDashboard();
+  if(b.dataset.tab==='violations')loadViolations();
+  if(b.dataset.tab==='stats')loadStats();
+  if(b.dataset.tab==='settings')loadSettings();
+});
+
+/* ---------- Dashboard ---------- */
+let dChart=null;
+async function loadDashboard(){
+  const d=await (await fetch(api+'/api/dashboard')).json();
+  $('d-det').textContent=d.detection_count;
+  $('d-vio').textContent=d.violation_count;
+  $('d-nor').textContent=d.normal_count;
+  $('d-rate').textContent=d.violation_rate+'%';
+  if(!dChart)dChart=echarts.init($('d-chart'));
+  const items=d.by_type.length?d.by_type:[{t:'暂无数据',c:0}];
+  dChart.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['40%','65%'],
+    data:items.map(x=>({name:x.t,value:x.c})),
+    label:{formatter:'{b}\n{c} 次'}}]});
+}
+loadDashboard();
+
+/* ---------- 智能巡检 ---------- */
+async function refreshLabSelects(){
+  const s=await (await fetch(api+'/api/settings')).json();
+  const opts=s.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+  $('i-lab').innerHTML=opts; $('s-lab').innerHTML=opts;
+  return s;
+}
+refreshLabSelects().then(s=>renderAreas(s));
+
+function sevBadge(s){return s==='严重违规'?'<span class="badge major">严重违规</span>':s==='一般违规'?'<span class="badge minor">一般违规</span>':'<span class="badge ok">正常</span>'}
+const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽'};
+
+async function runInspect(){
+  const f=$('i-file').files[0];
+  if(!f){alert('请先选择图片或视频文件');return}
+  const lab=$('i-lab').value;
+  const fd=new FormData();
+  fd.append('file',f); fd.append('lab_id',lab);
+  const isVideo=f.type.startsWith('video')||/\.(mp4|avi|mov)$/i.test(f.name);
+  $('i-run').disabled=true;
+  $('i-status').textContent=isVideo?'⏳ 视频处理中（GPU 推理，请耐心等待）…':'⏳ 处理中…';
+  $('i-result-card').style.display='none';
+  try{
+    const r=await (await fetch(api+`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd})).json();
+    if(r.error)throw r.error;
+    if(isVideo)renderVideoResult(r); else renderImageResult(r);
+    $('i-result-card').style.display='block';
+    $('i-status').textContent='✅ 完成';
+  }catch(e){$('i-status').textContent='❌ 失败：'+e; alert('处理失败：'+e)}
+  $('i-run').disabled=false;
+}
+
+function renderImageResult(r){
+  $('i-media').innerHTML=`<img id="resultImg" src="${r.annotated_url}?t=${Date.now()}">`;
+  $('i-summary').innerHTML=`检测到 <b>${r.person_count}</b> 人，违规 <b style="color:var(--danger)">${r.violation_count}</b> 人，处理耗时 <b>${r.elapsed_ms} ms</b>`;
+  const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
+  r.persons.forEach(p=>{
+    const ev=r.events.find(e=>e.person_id===p.person_id)||{};
+    tb.insertAdjacentHTML('beforeend',`<tr>
+      <td>人员 ${p.person_id}</td><td>${p.area}${p.in_roi?'':'（普通区域，不评估）'}</td>
+      <td>${Object.keys(p.ppe).map(k=>PPE_CN[k]).join('、')||'<i style="color:var(--muted)">未检测到</i>'}</td>
+      <td>${(ev.violation_types||[]).join('、')||'—'}</td><td>${sevBadge(ev.severity||'正常')}</td></tr>`);
+  });
+}
+
+function renderVideoResult(r){
+  $('i-media').innerHTML=`<video id="resultVideo" src="${r.output_video_url}" controls style="width:100%"></video>`;
+  $('i-summary').innerHTML=`共 <b>${r.total_frames}</b> 帧（实际推理 ${r.inferred_frames} 帧），处理速度 <b>${r.video_fps} FPS</b>，总耗时 <b>${r.elapsed_s}s</b>，生成违规事件 <b style="color:var(--danger)">${r.violation_count}</b> 个（同类违规每 10 秒记录一次）`;
+  const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
+  r.events.forEach(ev=>{
+    tb.insertAdjacentHTML('beforeend',`<tr>
+      <td>人员 ${ev.person_id}</td><td>${ev.area}</td>
+      <td>${ev.violation_types.join('、')}</td><td>${sevBadge(ev.severity)}</td>
+      <td>视频内 ${ev.frame_time}s</td>
+      <td>${ev.screenshot?`<img class="thumb" src="/media/screenshots/${ev.screenshot}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+  });
+}
+
+/* ---------- 违规记录 ---------- */
+async function loadViolations(){
+  const p=new URLSearchParams();
+  if($('v-type').value)p.set('vtype',$('v-type').value);
+  if($('v-sev').value)p.set('severity',$('v-sev').value);
+  if($('v-date').value)p.set('date',$('v-date').value);
+  const r=await (await fetch(api+'/api/violations?'+p)).json();
+  const tb=$('v-body'); tb.innerHTML='';
+  r.items.forEach(v=>{
+    tb.insertAdjacentHTML('beforeend',`<tr>
+      <td>${v.created_at}</td><td>${v.lab_name||'—'}</td><td>${v.area_name}</td>
+      <td>人员${v.person_id}</td><td>${v.violation_types}</td><td>${sevBadge(v.severity)}</td>
+      <td>${v.frame_time? v.frame_time+'s':'—'}</td>
+      <td>${v.screenshot_url?`<img class="thumb" src="${v.screenshot_url}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+  });
+  $('v-count').textContent=`共 ${r.total} 条记录`;
+}
+loadViolations();
+
+/* ---------- 数据统计 ---------- */
+let sDay=null,sType=null,sRatio=null;
+async function loadStats(){
+  const d=await (await fetch(api+'/api/statistics')).json();
+  sDay=sDay||echarts.init($('s-day')); sType=sType||echarts.init($('s-type')); sRatio=sRatio||echarts.init($('s-ratio'));
+  sDay.setOption({tooltip:{},xAxis:{type:'category',data:d.by_day.map(x=>x.d)},yAxis:{type:'value'},
+    grid:{left:40,right:20,top:20,bottom:30},
+    series:[{type:'bar',data:d.by_day.map(x=>x.c),itemStyle:{color:'#1f6feb'},barMaxWidth:36}]});
+  sType.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['35%','62%'],
+    data:d.by_type.map(x=>({name:x.t,value:x.c}))}]});
+  const sev=d.by_severity;
+  const total=sev.reduce((a,b)=>a+b.c,0);
+  const major=sev.find(x=>x.s==='严重违规')?.c||0;
+  const minor=sev.find(x=>x.s==='一般违规')?.c||0;
+  const normal=sev.find(x=>x.s==='正常')?.c||0;
+  sRatio.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:'60%',
+    data:[{name:'一般违规',value:minor,itemStyle:{color:'#f59e0b'}},
+          {name:'严重违规',value:major,itemStyle:{color:'#e5484d'}},
+          {name:'正常（区域内合规）',value:normal,itemStyle:{color:'#2ea043'}}]}]});
+}
+
+/* ---------- 系统设置 ---------- */
+let settingsCache=null;
+async function loadSettings(){
+  settingsCache=await (await fetch(api+'/api/settings')).json();
+  $('s-lab').innerHTML=settingsCache.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+  $('i-lab').innerHTML=$('s-lab').innerHTML;
+  renderAreas();
+}
+function renderAreas(s){
+  const data=s||settingsCache; if(!data)return;
+  const lab=data.labs.find(l=>l.id==$('s-lab').value)||data.labs[0];
+  if(!lab)return;
+  const tb=$('s-areas'); tb.innerHTML='';
+  lab.areas.forEach(a=>{
+    tb.insertAdjacentHTML('beforeend',`<tr><td>${a.id}</td><td>${a.name}</td>
+      <td>(${a.x1},${a.y1}) ~ (${a.x2},${a.y2})</td>
+      <td>${a.required_ppe.map(p=>PPE_CN[p]).join('、')}</td>
+      <td><button class="btn danger" style="padding:4px 10px" onclick="deleteArea(${a.id})">删除</button></td></tr>`);
+  });
+}
+async function createLab(){
+  const fd=new FormData();
+  fd.append('name',$('s-labname').value); fd.append('description',$('s-labdesc').value);
+  const r=await (await fetch(api+'/api/settings/lab',{method:'POST',body:fd})).json();
+  if(r.error){alert(r.error);return}
+  $('s-labname').value=''; loadSettings();
+}
+async function createArea(){
+  const fd=new FormData();
+  fd.append('lab_id',$('s-lab').value); fd.append('name',$('s-areaname').value);
+  ['x1','y1','x2','y2'].forEach(k=>fd.append(k,$('s-'+k).value));
+  fd.append('required_ppe',[...document.querySelectorAll('.s-ppe:checked')].map(c=>c.value).join(','));
+  await fetch(api+'/api/settings/area',{method:'POST',body:fd});
+  $('s-areaname').value=''; loadSettings();
+}
+async function deleteArea(id){
+  if(!confirm('确认删除该区域及其规则？'))return;
+  await fetch(api+`/api/settings/area/${id}`,{method:'DELETE'});
+  loadSettings();
+}
+
+function showLightbox(src){$('lightboxImg').src=src;$('lightbox').style.display='flex'}
+window.addEventListener('resize',()=>{[dChart,sDay,sType,sRatio].forEach(c=>c&&c.resize())});
+</script>
+</body>
+</html>

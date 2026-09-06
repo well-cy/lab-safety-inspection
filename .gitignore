@@ -1,0 +1,69 @@
+# ==========================================================
+# labsafety 项目 .gitignore
+# 依据：docs/DEVELOPMENT_GUIDE.md（Git 协作基础）
+# 原则：训练数据 / 训练产物 / 模型权重 / 运行输出 一律不入库；
+#       源码 + 文档 + 轻量测试夹具（data/test）入库，克隆即可测试。
+# ==========================================================
+
+# ===== Python 运行环境与缓存 =====
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# ===== 数据库（运行时自动重建，禁止提交） =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 模型权重（不入普通源码仓库） =====
+# 生产模型 sh17_yolov8s.pt 与训练产物均经 FINAL_MODEL.zip / AI_TRAINING.zip
+# 单独分发；新成员获取方式见 docs/DEVELOPMENT_GUIDE.md 第 2 节。
+# 若组长日后决定将 22.5MB 生产模型入库，取消下一行注释即可：
+# !ai/model/sh17_yolov8s.pt
+*.pt
+*.pth
+*.onnx
+*.engine
+weights/
+
+# ===== 媒体文件（默认排除图片/视频） =====
+# 说明：训练数据、运行输出中的图片视频均由此规则排除。
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+
+# ===== 数据目录：只保留测试夹具 =====
+# data/ 下其余内容（raw 原始数据集 / lab_ppe 训练集 / uploads 上传暂存）不入库
+data/*
+!data/test/
+!data/test/**
+# 测试夹具中的运行时上传文件仍排除
+data/test/uploads/
+
+# ===== 训练产物 =====
+runs/
+
+# ===== 运行输出（截图/标注图/标注视频/实验日志） =====
+outputs/
+
+# ===== 离线安装包与日志 =====
+wheels/
+pip*.log
+*.log
+*.tmp
+~$*
+
+# ===== 系统杂项 =====
+.DS_Store
+Thumbs.db
+
+# ===== 例外说明（勿删） =====
+# docs/ 目录若日后需要放文档截图，请新增形如 !docs/assets/*.png 的白名单，
+# 不要删除上面的媒体排除规则。
