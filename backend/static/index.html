@@ -109,7 +109,7 @@ label{font-size:13px;color:var(--muted)}
     <h3>检测结果</h3>
     <div id="i-media"></div>
     <div id="i-summary" style="margin:14px 0"></div>
-    <table id="i-persons"><thead><tr><th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>违规类型</th><th>严重程度</th></tr></thead><tbody></tbody></table>
+    <table id="i-persons"><thead><tr id="i-persons-head"><th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>违规类型</th><th>严重程度</th></tr></thead><tbody></tbody></table>
   </div>
 </section>
 
@@ -226,12 +226,14 @@ function showToast(msg, type='info', duration=3000){
 }
 
 /* ---------- 统一 fetch 封装（异常处理） ---------- */
+// 默认超时 30s；检测类请求耗时长，调用方用 opts.timeout（毫秒）覆盖
+const DEFAULT_TIMEOUT=30000;
 async function apiFetch(url, opts){
+  const {timeout=DEFAULT_TIMEOUT,...fetchOpts}=opts||{};
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),timeout);
   try{
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),30000);
-    const r=await fetch(api+url,{...opts,signal:ctrl.signal});
-    clearTimeout(timer);
+    const r=await fetch(api+url,{...fetchOpts,signal:ctrl.signal});
     if(!r.ok){
       let errMsg='请求失败 ('+r.status+')';
       try{const e=await r.json();if(e.error)errMsg=e.error}catch(_){}
@@ -239,10 +241,12 @@ async function apiFetch(url, opts){
     }
     return await r.json();
   }catch(e){
-    if(e.name==='AbortError'){showToast('请求超时，请检查后端服务是否正常','error');}
-    else if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError')){showToast('网络错误：无法连接到后端服务','error');}
+    if(e.name==='AbortError'){showToast(`请求超时（超过 ${Math.round(timeout/1000)} 秒），请检查后端服务是否正常`,'error');}
+    else if(e.message&&(e.message.includes('Failed to fetch')||e.message.includes('NetworkError'))){showToast('网络错误：无法连接到后端服务','error');}
     else{showToast(e.message,'error');}
     throw e;
+  }finally{
+    clearTimeout(timer);   // 成功/失败/超时任何路径都清理，避免定时器残留
   }
 }
 
@@ -292,24 +296,29 @@ async function runInspect(){
   $('i-run').disabled=true;
   $('i-status').textContent=isVideo?'⏳ 视频处理中（GPU 推理，请耐心等待）…':'⏳ 处理中…';
   $('i-result-card').style.display='none';
+  // 图片/视频处理耗时长，放宽超时：图片 120s，视频 600s
+  const timeout=isVideo?600000:120000;
   try{
-    const r=await apiFetch(`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd});
+    const r=await apiFetch(isVideo?'/api/detect/video':'/api/detect/image',{method:'POST',body:fd,timeout});
     if(isVideo)renderVideoResult(r); else renderImageResult(r);
     $('i-result-card').style.display='block';
     $('i-status').textContent='✅ 完成';
     showToast('检测完成','success');
   }catch(e){
     $('i-status').textContent='❌ 失败';
+  }finally{
+    $('i-run').disabled=false;   // 无论成功或失败都恢复按钮可用
   }
-  $('i-run').disabled=false;
 }
 
 function renderImageResult(r){
   $('i-media').innerHTML=`<img id="resultImg" src="${r.annotated_url}?t=${Date.now()}">`;
   $('i-summary').innerHTML=`检测到 <b>${r.person_count}</b> 人，违规 <b style="color:var(--danger)">${r.violation_count}</b> 人，处理耗时 <b>${r.elapsed_ms} ms</b>`;
+  // 图片接口返回 persons（含 area / ppe）与 events，表头与之对应
+  $('i-persons-head').innerHTML='<th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>违规类型</th><th>严重程度</th>';
   const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
-  r.persons.forEach(p=>{
-    const ev=r.events.find(e=>e.person_id===p.person_id)||{};
+  (r.persons||[]).forEach(p=>{
+    const ev=(r.events||[]).find(e=>e.person_id===p.person_id)||{};
     tb.insertAdjacentHTML('beforeend',`<tr>
       <td>人员 ${p.person_id}</td><td>${p.area}${p.in_roi?'':'（普通区域，不评估）'}</td>
       <td>${Object.keys(p.ppe).map(k=>PPE_CN[k]).join('、')||'<i style="color:var(--muted)">未检测到</i>'}</td>
@@ -320,13 +329,18 @@ function renderImageResult(r){
 function renderVideoResult(r){
   $('i-media').innerHTML=`<video id="resultVideo" src="${r.output_video_url}" controls style="width:100%"></video>`;
   $('i-summary').innerHTML=`共 <b>${r.total_frames}</b> 帧（实际推理 ${r.inferred_frames} 帧），处理速度 <b>${r.video_fps} FPS</b>，总耗时 <b>${r.elapsed_s}s</b>，生成违规事件 <b style="color:var(--danger)">${r.violation_count}</b> 个（同类违规每 10 秒记录一次）`;
+  // 视频接口不返回 persons / PPE，只有去重后的违规事件，故表头与图片模式不同
+  $('i-persons-head').innerHTML='<th>人员编号</th><th>所在区域</th><th>违规类型</th><th>严重程度</th><th>视频内时间</th><th>事件时间</th><th>截图</th>';
   const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
-  r.events.forEach(ev=>{
+  (r.events||[]).forEach(ev=>{
+    const types=(ev.violation_types||[]).join('、')||'—';
+    const frame=ev.frame_time!=null?ev.frame_time+'s':'—';
+    const shot=ev.screenshot?`<img class="thumb" src="/media/screenshots/${ev.screenshot}" onclick="showLightbox(this.src)">`:'—';
     tb.insertAdjacentHTML('beforeend',`<tr>
-      <td>人员 ${ev.person_id}</td><td>${ev.area}</td>
-      <td>${ev.violation_types.join('、')}</td><td>${sevBadge(ev.severity)}</td>
-      <td>视频内 ${ev.frame_time}s</td>
-      <td>${ev.screenshot?`<img class="thumb" src="/media/screenshots/${ev.screenshot}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+      <td>人员 ${ev.person_id}</td><td>${ev.area||'—'}</td>
+      <td>${types}</td><td>${sevBadge(ev.severity||'正常')}</td>
+      <td>${frame}</td><td>${ev.timestamp||'—'}</td>
+      <td>${shot}</td></tr>`);
   });
 }
 
@@ -410,9 +424,24 @@ async function createLab(){
 async function createArea(){
   const name=$('s-areaname').value.trim();
   if(!name){showToast('请输入区域名称','warn');return}
+  // 提交前校验 ROI 坐标：必须是有效数字、处于 0~1，且 x1<x2、y1<y2
+  const coord={};
+  for(const k of ['x1','y1','x2','y2']){
+    const raw=String($('s-'+k).value).trim();
+    const v=Number(raw);
+    if(raw===''||!Number.isFinite(v)){
+      showToast(`坐标 ${k.toUpperCase()} 不是有效数字，请填写 0~1 之间的数值`,'warn');return
+    }
+    if(v<0||v>1){
+      showToast(`坐标 ${k.toUpperCase()} = ${v} 超出范围，必须在 0~1 之间`,'warn');return
+    }
+    coord[k]=v;
+  }
+  if(!(coord.x1<coord.x2)){showToast('坐标无效：需满足 X1 < X2','warn');return}
+  if(!(coord.y1<coord.y2)){showToast('坐标无效：需满足 Y1 < Y2','warn');return}
   const fd=new FormData();
   fd.append('lab_id',$('s-lab').value); fd.append('name',name);
-  ['x1','y1','x2','y2'].forEach(k=>fd.append(k,$('s-'+k).value));
+  ['x1','y1','x2','y2'].forEach(k=>fd.append(k,coord[k]));
   fd.append('required_ppe',[...document.querySelectorAll('.s-ppe:checked')].map(c=>c.value).join(','));
   try{
     await apiFetch('/api/settings/area',{method:'POST',body:fd});
@@ -438,20 +467,43 @@ let roiDrawing=false;
 let roiStart={x:0,y:0};
 let roiRect=null; // {x1,y1,x2,y2} 归一化 0~1
 
+// 背景图在画布内的实际显示区域（画布像素坐标）。
+// 背景图等比缩放居中显示，非 16:9 图片会在四周留白，留白不属于可绘制区域。
+// 未上传背景图时，整块画布即绘制区域。
+function roiImageRect(){
+  const cw=roiCanvas.width, ch=roiCanvas.height;
+  if(!roiBgImg) return {dx:0,dy:0,dw:cw,dh:ch};
+  const iw=roiBgImg.width||1, ih=roiBgImg.height||1;
+  const scale=Math.min(cw/iw, ch/ih);
+  const dw=iw*scale, dh=ih*scale;
+  return {dx:(cw-dw)/2, dy:(ch-dh)/2, dw, dh};
+}
+
+// 鼠标事件 → 背景图内归一化坐标（0~1）。
+// 先按 CSS 实际显示尺寸换算到画布内部像素，再以背景图显示区域为基准归一化，
+// 越界（落在留白区）时截断到图片边界。
+function roiEventToNorm(e){
+  const rect=roiCanvas.getBoundingClientRect();
+  const kx=rect.width?roiCanvas.width/rect.width:1;
+  const ky=rect.height?roiCanvas.height/rect.height:1;
+  const px=(e.clientX-rect.left)*kx, py=(e.clientY-rect.top)*ky;
+  const a=roiImageRect();
+  const nx=(px-a.dx)/(a.dw||1), ny=(py-a.dy)/(a.dh||1);
+  return {x:Math.min(1,Math.max(0,nx)), y:Math.min(1,Math.max(0,ny))};
+}
+
 function drawRoiCanvas(){
   roiCtx.clearRect(0,0,roiCanvas.width,roiCanvas.height);
   if(roiBgImg){
     // 保持比例绘制背景图
-    const cw=roiCanvas.width, ch=roiCanvas.height;
-    const iw=roiBgImg.width, ih=roiBgImg.height;
-    const scale=Math.min(cw/iw, ch/ih);
-    const dw=iw*scale, dh=ih*scale;
-    const dx=(cw-dw)/2, dy=(ch-dh)/2;
-    roiCtx.drawImage(roiBgImg,dx,dy,dw,dh);
+    const a=roiImageRect();
+    roiCtx.drawImage(roiBgImg,a.dx,a.dy,a.dw,a.dh);
   }
   if(roiRect){
-    const x=roiRect.x1*roiCanvas.width, y=roiRect.y1*roiCanvas.height;
-    const w=(roiRect.x2-roiRect.x1)*roiCanvas.width, h=(roiRect.y2-roiRect.y1)*roiCanvas.height;
+    // 归一化坐标按背景图显示区域反算像素，保证矩形与背景图严格对齐
+    const a=roiImageRect();
+    const x=a.dx+roiRect.x1*a.dw, y=a.dy+roiRect.y1*a.dh;
+    const w=(roiRect.x2-roiRect.x1)*a.dw, h=(roiRect.y2-roiRect.y1)*a.dh;
     roiCtx.strokeStyle='#00bfff'; roiCtx.lineWidth=2;
     roiCtx.setLineDash([6,4]);
     roiCtx.strokeRect(x,y,w,h);
@@ -470,27 +522,28 @@ $('roi-bg').addEventListener('change',e=>{
 });
 
 roiCanvas.addEventListener('mousedown',e=>{
+  const p=roiEventToNorm(e);       // 落在留白区时已被限制到图片边界
   roiDrawing=true;
-  const rect=roiCanvas.getBoundingClientRect();
-  const sx=(e.clientX-rect.left)/rect.width;
-  const sy=(e.clientY-rect.top)/rect.height;
-  roiStart={x:sx,y:sy};
-  roiRect={x1:sx,y1:sy,x2:sx,y2:sy};
+  roiStart={x:p.x,y:p.y};
+  roiRect={x1:p.x,y1:p.y,x2:p.x,y2:p.y};
   drawRoiCanvas();
+  updateRoiCoordDisplay();
+  e.preventDefault();
 });
 roiCanvas.addEventListener('mousemove',e=>{
   if(!roiDrawing)return;
-  const rect=roiCanvas.getBoundingClientRect();
-  const cx=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
-  const cy=Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height));
+  const p=roiEventToNorm(e);
+  // 取 min/max 同时支持反向拖拽，并保证矩形不越出图片边界
   roiRect={
-    x1:Math.min(roiStart.x,cx),y1:Math.min(roiStart.y,cy),
-    x2:Math.max(roiStart.x,cx),y2:Math.max(roiStart.y,cy)
+    x1:Math.min(roiStart.x,p.x),y1:Math.min(roiStart.y,p.y),
+    x2:Math.max(roiStart.x,p.x),y2:Math.max(roiStart.y,p.y)
   };
   drawRoiCanvas();
   updateRoiCoordDisplay();
 });
-roiCanvas.addEventListener('mouseup',()=>{roiDrawing=false;updateRoiCoordDisplay()});
+function roiEndDraw(){if(roiDrawing){roiDrawing=false;updateRoiCoordDisplay()}}
+roiCanvas.addEventListener('mouseup',roiEndDraw);
+window.addEventListener('mouseup',roiEndDraw);   // 在画布外松开鼠标也能正常结束绘制
 roiCanvas.addEventListener('mouseleave',()=>{roiDrawing=false});
 
 function updateRoiCoordDisplay(){
@@ -507,6 +560,10 @@ function clearRoiCanvas(){roiRect=null;roiBgImg=null;drawRoiCanvas();
 
 function applyRoiToForm(){
   if(!roiRect){showToast('请先在画布上绘制 ROI 矩形','warn');return}
+  // 仅单击画布、或矩形宽/高为 0 时视为无效区域，不回填坐标
+  if(!(roiRect.x2>roiRect.x1)||!(roiRect.y2>roiRect.y1)){
+    showToast('请绘制有效的矩形区域','warn');return
+  }
   $('s-x1').value=roiRect.x1.toFixed(2);
   $('s-y1').value=roiRect.y1.toFixed(2);
   $('s-x2').value=roiRect.x2.toFixed(2);
