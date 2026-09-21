@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>实验室安全智能巡检与违规预警系统</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<!-- ECharts 本地化：从 /static/vendor 加载，断网也能渲染图表 -->
+<script src="/static/vendor/echarts.min.js"></script>
 <style>
 :root{--primary:#1f6feb;--danger:#e5484d;--warn:#f59e0b;--ok:#2ea043;--bg:#f5f7fa;--card:#fff;--text:#1f2328;--muted:#6a737d;--border:#e4e7eb}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -27,7 +28,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{padding:9px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
 th{background:#f6f8fa;font-weight:600;color:var(--muted)}
 .badge{display:inline-block;padding:2px 9px;border-radius:11px;font-size:12px}
-.badge.major{background:#fdebebeb;color:var(--danger)}
+.badge.major{background:#fdebeb;color:var(--danger)}
 .badge.minor{background:#fff5e0;color:#b06f0a}
 .badge.ok{background:#e6f4ea;color:var(--ok)}
 .btn{background:var(--primary);color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:14px;cursor:pointer}
@@ -35,6 +36,7 @@ th{background:#f6f8fa;font-weight:600;color:var(--muted)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .btn.ghost{background:#fff;color:var(--primary);border:1px solid var(--primary)}
 .btn.danger{background:var(--danger)}
+.btn.warn{background:var(--warn)}
 input,select{padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;background:#fff}
 .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 label{font-size:13px;color:var(--muted)}
@@ -46,6 +48,21 @@ label{font-size:13px;color:var(--muted)}
 .ppechk{display:flex;gap:14px;margin:8px 0}
 .ppechk label{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text)}
 .section{margin-bottom:20px}
+
+/* ---------- Toast 提示 ---------- */
+#toast-container{position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:12px 18px;border-radius:8px;color:#fff;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);min-width:240px;max-width:380px;pointer-events:auto;animation:toastIn .25s ease}
+.toast.info{background:#1f6feb}.toast.success{background:#2ea043}.toast.warn{background:#f59e0b}.toast.error{background:#e5484d}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.toast-close{float:right;cursor:pointer;margin-left:12px;opacity:.8}
+
+/* ---------- ROI 编辑器 ---------- */
+.roi-editor-wrap{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px}
+.roi-canvas-wrap{position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#1a1a2e}
+#roiCanvas{display:block;max-width:100%;height:auto;cursor:crosshair}
+.roi-info{flex:1;min-width:240px}
+.roi-info .coord-row{display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.roi-info input{width:80px}
 </style>
 </head>
 <body>
@@ -108,6 +125,8 @@ label{font-size:13px;color:var(--muted)}
       <label>日期</label><input type="date" id="v-date">
       <button class="btn" onclick="loadViolations()">查询</button>
     </div>
+    <!-- 导出功能挂载点（成员5 的 export.js 动态渲染） -->
+    <div id="export-panel"></div>
     <table><thead><tr><th>时间</th><th>实验室</th><th>区域</th><th>人员</th><th>违规类型</th><th>严重程度</th><th>视频内时间</th><th>截图</th></tr></thead>
     <tbody id="v-body"></tbody></table>
     <div class="hint" id="v-count"></div>
@@ -150,6 +169,34 @@ label{font-size:13px;color:var(--muted)}
     <table><thead><tr><th>区域ID</th><th>名称</th><th>ROI</th><th>必须佩戴</th><th>操作</th></tr></thead><tbody id="s-areas"></tbody></table>
     <div class="hint">提示：上传检测页面选中的实验室若没有配置任何区域，则所有人员都视为处于"普通区域"，不会触发 PPE 违规判断。</div>
   </div>
+
+  <!-- ROI 可视化编辑器 -->
+  <div class="card">
+    <h3>ROI 可视化编辑器</h3>
+    <div class="row">
+      <label>背景图</label>
+      <input type="file" id="roi-bg" accept="image/*">
+      <button class="btn ghost" onclick="clearRoiCanvas()">清除矩形</button>
+      <span class="hint" style="margin-left:8px">在画布上按住鼠标拖拽绘制矩形 ROI，坐标自动回填到上方表单</span>
+    </div>
+    <div class="roi-editor-wrap">
+      <div class="roi-canvas-wrap">
+        <canvas id="roiCanvas" width="640" height="360"></canvas>
+      </div>
+      <div class="roi-info">
+        <div class="coord-row">
+          <label>X1</label><input id="r-x1" type="number" step="0.01" readonly style="width:80px">
+          <label>Y1</label><input id="r-y1" type="number" step="0.01" readonly style="width:80px">
+        </div>
+        <div class="coord-row">
+          <label>X2</label><input id="r-x2" type="number" step="0.01" readonly style="width:80px">
+          <label>Y2</label><input id="r-y2" type="number" step="0.01" readonly style="width:80px">
+        </div>
+        <button class="btn" onclick="applyRoiToForm()">应用到表单</button>
+        <div class="hint">绘制完成后点击"应用到表单"，将坐标回填到区域创建表单。</div>
+      </div>
+    </div>
+  </div>
 </section>
 </main>
 
@@ -157,9 +204,47 @@ label{font-size:13px;color:var(--muted)}
   <img id="lightboxImg" style="max-width:92%;max-height:92%">
 </div>
 
+<!-- Toast 容器 -->
+<div id="toast-container"></div>
+
+<!-- 成员5 导出功能入口（若存在则加载） -->
+<script src="/static/export.js"></script>
+
 <script>
 const $=id=>document.getElementById(id);
 const api=window.location.origin;
+let settingsCache=null;
+
+/* ---------- Toast 通知系统 ---------- */
+function showToast(msg, type='info', duration=3000){
+  const c=$('toast-container');
+  const t=document.createElement('div');
+  t.className='toast '+type;
+  t.innerHTML=msg+'<span class="toast-close" onclick="this.parentElement.remove()">✕</span>';
+  c.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},duration);
+}
+
+/* ---------- 统一 fetch 封装（异常处理） ---------- */
+async function apiFetch(url, opts){
+  try{
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),30000);
+    const r=await fetch(api+url,{...opts,signal:ctrl.signal});
+    clearTimeout(timer);
+    if(!r.ok){
+      let errMsg='请求失败 ('+r.status+')';
+      try{const e=await r.json();if(e.error)errMsg=e.error}catch(_){}
+      throw new Error(errMsg);
+    }
+    return await r.json();
+  }catch(e){
+    if(e.name==='AbortError'){showToast('请求超时，请检查后端服务是否正常','error');}
+    else if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError')){showToast('网络错误：无法连接到后端服务','error');}
+    else{showToast(e.message,'error');}
+    throw e;
+  }
+}
 
 /* ---------- Tab 切换 ---------- */
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
@@ -176,34 +261,30 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 /* ---------- Dashboard ---------- */
 let dChart=null;
 async function loadDashboard(){
-  const d=await (await fetch(api+'/api/dashboard')).json();
-  $('d-det').textContent=d.detection_count;
-  $('d-vio').textContent=d.violation_count;
-  $('d-nor').textContent=d.normal_count;
-  $('d-rate').textContent=d.violation_rate+'%';
-  if(!dChart)dChart=echarts.init($('d-chart'));
-  const items=d.by_type.length?d.by_type:[{t:'暂无数据',c:0}];
-  dChart.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['40%','65%'],
-    data:items.map(x=>({name:x.t,value:x.c})),
-    label:{formatter:'{b}\n{c} 次'}}]});
+  try{
+    const d=await apiFetch('/api/dashboard');
+    $('d-det').textContent=d.detection_count;
+    $('d-vio').textContent=d.violation_count;
+    $('d-nor').textContent=d.normal_count;
+    $('d-rate').textContent=d.violation_rate+'%';
+    if(!dChart)dChart=echarts.init($('d-chart'));
+    const items=d.by_type&&d.by_type.length?d.by_type:[{t:'暂无数据',c:0}];
+    dChart.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['40%','65%'],
+      data:items.map(x=>({name:x.t,value:x.c})),
+      label:{formatter:'{b}\n{c} 次'}}]});
+  }catch(e){console.error('Dashboard 加载失败',e)}
 }
 loadDashboard();
 
 /* ---------- 智能巡检 ---------- */
-async function refreshLabSelects(){
-  const s=await (await fetch(api+'/api/settings')).json();
-  const opts=s.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
-  $('i-lab').innerHTML=opts; $('s-lab').innerHTML=opts;
-  return s;
-}
-refreshLabSelects().then(s=>renderAreas(s));
+loadSettings();
 
 function sevBadge(s){return s==='严重违规'?'<span class="badge major">严重违规</span>':s==='一般违规'?'<span class="badge minor">一般违规</span>':'<span class="badge ok">正常</span>'}
 const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽'};
 
 async function runInspect(){
   const f=$('i-file').files[0];
-  if(!f){alert('请先选择图片或视频文件');return}
+  if(!f){showToast('请先选择图片或视频文件','warn');return}
   const lab=$('i-lab').value;
   const fd=new FormData();
   fd.append('file',f); fd.append('lab_id',lab);
@@ -212,12 +293,14 @@ async function runInspect(){
   $('i-status').textContent=isVideo?'⏳ 视频处理中（GPU 推理，请耐心等待）…':'⏳ 处理中…';
   $('i-result-card').style.display='none';
   try{
-    const r=await (await fetch(api+`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd})).json();
-    if(r.error)throw r.error;
+    const r=await apiFetch(`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd});
     if(isVideo)renderVideoResult(r); else renderImageResult(r);
     $('i-result-card').style.display='block';
     $('i-status').textContent='✅ 完成';
-  }catch(e){$('i-status').textContent='❌ 失败：'+e; alert('处理失败：'+e)}
+    showToast('检测完成','success');
+  }catch(e){
+    $('i-status').textContent='❌ 失败';
+  }
   $('i-run').disabled=false;
 }
 
@@ -249,51 +332,56 @@ function renderVideoResult(r){
 
 /* ---------- 违规记录 ---------- */
 async function loadViolations(){
-  const p=new URLSearchParams();
-  if($('v-type').value)p.set('vtype',$('v-type').value);
-  if($('v-sev').value)p.set('severity',$('v-sev').value);
-  if($('v-date').value)p.set('date',$('v-date').value);
-  const r=await (await fetch(api+'/api/violations?'+p)).json();
-  const tb=$('v-body'); tb.innerHTML='';
-  r.items.forEach(v=>{
-    tb.insertAdjacentHTML('beforeend',`<tr>
-      <td>${v.created_at}</td><td>${v.lab_name||'—'}</td><td>${v.area_name}</td>
-      <td>人员${v.person_id}</td><td>${v.violation_types}</td><td>${sevBadge(v.severity)}</td>
-      <td>${v.frame_time? v.frame_time+'s':'—'}</td>
-      <td>${v.screenshot_url?`<img class="thumb" src="${v.screenshot_url}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
-  });
-  $('v-count').textContent=`共 ${r.total} 条记录`;
+  try{
+    const p=new URLSearchParams();
+    if($('v-type').value)p.set('vtype',$('v-type').value);
+    if($('v-sev').value)p.set('severity',$('v-sev').value);
+    if($('v-date').value)p.set('date',$('v-date').value);
+    const r=await apiFetch('/api/violations?'+p);
+    const tb=$('v-body'); tb.innerHTML='';
+    r.items.forEach(v=>{
+      tb.insertAdjacentHTML('beforeend',`<tr>
+        <td>${v.created_at}</td><td>${v.lab_name||'—'}</td><td>${v.area_name}</td>
+        <td>人员${v.person_id}</td><td>${v.violation_types}</td><td>${sevBadge(v.severity)}</td>
+        <td>${v.frame_time? v.frame_time+'s':'—'}</td>
+        <td>${v.screenshot_url?`<img class="thumb" src="${v.screenshot_url}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+    });
+    $('v-count').textContent=`共 ${r.total} 条记录`;
+  }catch(e){console.error('违规记录加载失败',e)}
 }
 loadViolations();
 
 /* ---------- 数据统计 ---------- */
 let sDay=null,sType=null,sRatio=null;
 async function loadStats(){
-  const d=await (await fetch(api+'/api/statistics')).json();
-  sDay=sDay||echarts.init($('s-day')); sType=sType||echarts.init($('s-type')); sRatio=sRatio||echarts.init($('s-ratio'));
-  sDay.setOption({tooltip:{},xAxis:{type:'category',data:d.by_day.map(x=>x.d)},yAxis:{type:'value'},
-    grid:{left:40,right:20,top:20,bottom:30},
-    series:[{type:'bar',data:d.by_day.map(x=>x.c),itemStyle:{color:'#1f6feb'},barMaxWidth:36}]});
-  sType.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['35%','62%'],
-    data:d.by_type.map(x=>({name:x.t,value:x.c}))}]});
-  const sev=d.by_severity;
-  const total=sev.reduce((a,b)=>a+b.c,0);
-  const major=sev.find(x=>x.s==='严重违规')?.c||0;
-  const minor=sev.find(x=>x.s==='一般违规')?.c||0;
-  const normal=sev.find(x=>x.s==='正常')?.c||0;
-  sRatio.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:'60%',
-    data:[{name:'一般违规',value:minor,itemStyle:{color:'#f59e0b'}},
-          {name:'严重违规',value:major,itemStyle:{color:'#e5484d'}},
-          {name:'正常（区域内合规）',value:normal,itemStyle:{color:'#2ea043'}}]}]});
+  try{
+    const d=await apiFetch('/api/statistics');
+    sDay=sDay||echarts.init($('s-day')); sType=sType||echarts.init($('s-type')); sRatio=sRatio||echarts.init($('s-ratio'));
+    sDay.setOption({tooltip:{},xAxis:{type:'category',data:d.by_day.map(x=>x.d)},yAxis:{type:'value'},
+      grid:{left:40,right:20,top:20,bottom:30},
+      series:[{type:'bar',data:d.by_day.map(x=>x.c),itemStyle:{color:'#1f6feb'},barMaxWidth:36}]});
+    sType.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:['35%','62%'],
+      data:d.by_type.map(x=>({name:x.t,value:x.c}))}]});
+    const sev=d.by_severity;
+    const total=sev.reduce((a,b)=>a+b.c,0);
+    const major=sev.find(x=>x.s==='严重违规')?.c||0;
+    const minor=sev.find(x=>x.s==='一般违规')?.c||0;
+    const normal=sev.find(x=>x.s==='正常')?.c||0;
+    sRatio.setOption({tooltip:{trigger:'item'},series:[{type:'pie',radius:'60%',
+      data:[{name:'一般违规',value:minor,itemStyle:{color:'#f59e0b'}},
+            {name:'严重违规',value:major,itemStyle:{color:'#e5484d'}},
+            {name:'正常（区域内合规）',value:normal,itemStyle:{color:'#2ea043'}}]}]});
+  }catch(e){console.error('统计加载失败',e)}
 }
 
 /* ---------- 系统设置 ---------- */
-let settingsCache=null;
 async function loadSettings(){
-  settingsCache=await (await fetch(api+'/api/settings')).json();
-  $('s-lab').innerHTML=settingsCache.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
-  $('i-lab').innerHTML=$('s-lab').innerHTML;
-  renderAreas();
+  try{
+    settingsCache=await apiFetch('/api/settings');
+    $('s-lab').innerHTML=settingsCache.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+    $('i-lab').innerHTML=$('s-lab').innerHTML;
+    renderAreas();
+  }catch(e){console.error('设置加载失败',e)}
 }
 function renderAreas(s){
   const data=s||settingsCache; if(!data)return;
@@ -308,26 +396,128 @@ function renderAreas(s){
   });
 }
 async function createLab(){
+  const name=$('s-labname').value.trim();
+  if(!name){showToast('请输入实验室名称','warn');return}
   const fd=new FormData();
-  fd.append('name',$('s-labname').value); fd.append('description',$('s-labdesc').value);
-  const r=await (await fetch(api+'/api/settings/lab',{method:'POST',body:fd})).json();
-  if(r.error){alert(r.error);return}
-  $('s-labname').value=''; loadSettings();
+  fd.append('name',name); fd.append('description',$('s-labdesc').value);
+  try{
+    await apiFetch('/api/settings/lab',{method:'POST',body:fd});
+    $('s-labname').value='';
+    showToast('实验室创建成功','success');
+    loadSettings();
+  }catch(e){/* toast 已显示 */}
 }
 async function createArea(){
+  const name=$('s-areaname').value.trim();
+  if(!name){showToast('请输入区域名称','warn');return}
   const fd=new FormData();
-  fd.append('lab_id',$('s-lab').value); fd.append('name',$('s-areaname').value);
+  fd.append('lab_id',$('s-lab').value); fd.append('name',name);
   ['x1','y1','x2','y2'].forEach(k=>fd.append(k,$('s-'+k).value));
   fd.append('required_ppe',[...document.querySelectorAll('.s-ppe:checked')].map(c=>c.value).join(','));
-  await fetch(api+'/api/settings/area',{method:'POST',body:fd});
-  $('s-areaname').value=''; loadSettings();
+  try{
+    await apiFetch('/api/settings/area',{method:'POST',body:fd});
+    $('s-areaname').value='';
+    showToast('区域创建成功','success');
+    loadSettings();
+  }catch(e){/* toast 已显示 */}
 }
 async function deleteArea(id){
   if(!confirm('确认删除该区域及其规则？'))return;
-  await fetch(api+`/api/settings/area/${id}`,{method:'DELETE'});
-  loadSettings();
+  try{
+    await apiFetch(`/api/settings/area/${id}`,{method:'DELETE'});
+    showToast('区域已删除','success');
+    loadSettings();
+  }catch(e){/* toast 已显示 */}
 }
 
+/* ---------- ROI 可视化编辑器 ---------- */
+const roiCanvas=$('roiCanvas');
+const roiCtx=roiCanvas.getContext('2d');
+let roiBgImg=null;
+let roiDrawing=false;
+let roiStart={x:0,y:0};
+let roiRect=null; // {x1,y1,x2,y2} 归一化 0~1
+
+function drawRoiCanvas(){
+  roiCtx.clearRect(0,0,roiCanvas.width,roiCanvas.height);
+  if(roiBgImg){
+    // 保持比例绘制背景图
+    const cw=roiCanvas.width, ch=roiCanvas.height;
+    const iw=roiBgImg.width, ih=roiBgImg.height;
+    const scale=Math.min(cw/iw, ch/ih);
+    const dw=iw*scale, dh=ih*scale;
+    const dx=(cw-dw)/2, dy=(ch-dh)/2;
+    roiCtx.drawImage(roiBgImg,dx,dy,dw,dh);
+  }
+  if(roiRect){
+    const x=roiRect.x1*roiCanvas.width, y=roiRect.y1*roiCanvas.height;
+    const w=(roiRect.x2-roiRect.x1)*roiCanvas.width, h=(roiRect.y2-roiRect.y1)*roiCanvas.height;
+    roiCtx.strokeStyle='#00bfff'; roiCtx.lineWidth=2;
+    roiCtx.setLineDash([6,4]);
+    roiCtx.strokeRect(x,y,w,h);
+    roiCtx.setLineDash([]);
+    roiCtx.fillStyle='rgba(0,191,255,0.12)';
+    roiCtx.fillRect(x,y,w,h);
+  }
+}
+
+$('roi-bg').addEventListener('change',e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  const img=new Image();
+  img.onload=()=>{roiBgImg=img; roiRect=null; drawRoiCanvas()};
+  img.src=URL.createObjectURL(f);
+});
+
+roiCanvas.addEventListener('mousedown',e=>{
+  roiDrawing=true;
+  const rect=roiCanvas.getBoundingClientRect();
+  const sx=(e.clientX-rect.left)/rect.width;
+  const sy=(e.clientY-rect.top)/rect.height;
+  roiStart={x:sx,y:sy};
+  roiRect={x1:sx,y1:sy,x2:sx,y2:sy};
+  drawRoiCanvas();
+});
+roiCanvas.addEventListener('mousemove',e=>{
+  if(!roiDrawing)return;
+  const rect=roiCanvas.getBoundingClientRect();
+  const cx=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+  const cy=Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height));
+  roiRect={
+    x1:Math.min(roiStart.x,cx),y1:Math.min(roiStart.y,cy),
+    x2:Math.max(roiStart.x,cx),y2:Math.max(roiStart.y,cy)
+  };
+  drawRoiCanvas();
+  updateRoiCoordDisplay();
+});
+roiCanvas.addEventListener('mouseup',()=>{roiDrawing=false;updateRoiCoordDisplay()});
+roiCanvas.addEventListener('mouseleave',()=>{roiDrawing=false});
+
+function updateRoiCoordDisplay(){
+  if(!roiRect)return;
+  $('r-x1').value=roiRect.x1.toFixed(2);
+  $('r-y1').value=roiRect.y1.toFixed(2);
+  $('r-x2').value=roiRect.x2.toFixed(2);
+  $('r-y2').value=roiRect.y2.toFixed(2);
+}
+
+function clearRoiCanvas(){roiRect=null;roiBgImg=null;drawRoiCanvas();
+  ['r-x1','r-y1','r-x2','r-y2'].forEach(id=>$(id).value='');
+}
+
+function applyRoiToForm(){
+  if(!roiRect){showToast('请先在画布上绘制 ROI 矩形','warn');return}
+  $('s-x1').value=roiRect.x1.toFixed(2);
+  $('s-y1').value=roiRect.y1.toFixed(2);
+  $('s-x2').value=roiRect.x2.toFixed(2);
+  $('s-y2').value=roiRect.y2.toFixed(2);
+  showToast('坐标已回填到区域创建表单','success');
+}
+
+// 初始化画布背景（深色占位）
+drawRoiCanvas();
+
+/* ---------- 通用 ---------- */
 function showLightbox(src){$('lightboxImg').src=src;$('lightbox').style.display='flex'}
 window.addEventListener('resize',()=>{[dChart,sDay,sType,sRatio].forEach(c=>c&&c.resize())});
 </script>
