@@ -213,6 +213,7 @@ label{font-size:13px;color:var(--muted)}
 <script>
 const $=id=>document.getElementById(id);
 const api=window.location.origin;
+let settingsCache=null;
 
 /* ---------- Toast 通知系统 ---------- */
 function showToast(msg, type='info', duration=3000){
@@ -276,15 +277,7 @@ async function loadDashboard(){
 loadDashboard();
 
 /* ---------- 智能巡检 ---------- */
-async function refreshLabSelects(){
-  try{
-    const s=await apiFetch('/api/settings');
-    const opts=s.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
-    $('i-lab').innerHTML=opts; $('s-lab').innerHTML=opts;
-    return s;
-  }catch(e){return null}
-}
-refreshLabSelects().then(s=>renderAreas(s));
+loadSettings();
 
 function sevBadge(s){return s==='严重违规'?'<span class="badge major">严重违规</span>':s==='一般违规'?'<span class="badge minor">一般违规</span>':'<span class="badge ok">正常</span>'}
 const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽'};
@@ -382,7 +375,6 @@ async function loadStats(){
 }
 
 /* ---------- 系统设置 ---------- */
-let settingsCache=null;
 async function loadSettings(){
   try{
     settingsCache=await apiFetch('/api/settings');
