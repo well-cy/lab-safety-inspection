@@ -69,7 +69,19 @@ def color_of(cls: str):
         return (255, 255, 255)
 
 
-def draw(img_path: Path, lbl_path: Path, names: dict):
+def resolve_label(img_path: Path) -> Path:
+    """按图片路径推断同名标注文件位置，兼容两种目录布局：
+        raw 数据集布局   <root>/<split>/images/x.jpg -> <root>/<split>/labels/x.txt
+        项目统一布局     <root>/images/<split>/x.jpg -> <root>/labels/<split>/x.txt
+    """
+    stem = img_path.stem + ".txt"
+    a = img_path.parent.parent / "labels" / stem          # 布局 A
+    if a.exists() or (img_path.parent.parent / "labels").is_dir():
+        return a
+    return img_path.parent.parent.parent / "labels" / img_path.parent.name / stem  # 布局 B
+
+
+def draw(img_path: Path, lbl_path: Path, names: dict, targets: set | None = None):
     img = imread_u(img_path)
     if img is None:
         return None
@@ -82,6 +94,13 @@ def draw(img_path: Path, lbl_path: Path, names: dict):
         if len(p) != 5:
             continue
         cls, xc, yc, bw, bh = p[0], *map(float, p[1:])
+        # 只画指定类别（按类别审计用）
+        if targets is not None:
+            try:
+                if int(float(cls)) not in targets:
+                    continue
+            except ValueError:
+                continue
         # 数字 id → 类别名（如 1 → lab_coat）
         try:
             show = names.get(int(float(cls)), cls)
@@ -110,13 +129,34 @@ def main():
                     help="--list 的根目录（数据集根，如 data/raw/labcoat_si）")
     ap.add_argument("--random", type=int, default=0,
                     help="从待画图中随机抽 N 张（抽查用，0=不随机）")
+    ap.add_argument("--only-class", default="",
+                    help="只画指定类别（数字 id 或类名，逗号分隔），如 --only-class gloves,1；"
+                         "同时只挑含该类别的图片（按类别抽检用）")
     args = ap.parse_args()
+
+    targets = None
+    if args.only_class:
+        targets = set()
+        for tok in args.only_class.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            if tok.isdigit():
+                targets.add(int(tok))
+            else:
+                rev = {"mask": 0, "gloves": 1, "lab_coat": 2, "goggles": 3, "face": 0,
+                       "glove": 1, "goggle": 1}
+                if tok.lower() in rev:
+                    targets.add(rev[tok.lower()])
+                else:
+                    print(f"[警告] 无法识别的类别: {tok}（用数字 id 或 mask/gloves/lab_coat/goggles）")
+        print(f"[类别过滤] 只画类别 {sorted(targets)}")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
     # 模式一：按清单画（配合去重剔除清单做入库前抽查）
-    jobs = []  # (img_path, lbl_path, names)
+    jobs = []  # (img_path, lbl_path, names, targets)
     if args.list:
         root = Path(args.root)
         names = load_names(root, args.names)
@@ -125,12 +165,19 @@ def main():
             rel = ln.split("\t")[0].strip()
             if not rel or rel.startswith("#"):
                 continue
-            # 清单格式: <split>/<文件名>（与 dedup_new_dataset 的 leak 清单一致），
-            # 实际布局是 <split>/images/<文件名>、<split>/labels/<同名>.txt
+            # 清单格式: <split>/<文件名>（与 dedup_new_dataset 的 leak 清单一致）。
+            # 兼容两种目录布局：
+            #   raw 数据集布局   <root>/<split>/images/<文件名>   （dataset1/2、labcoat_si、b3）
+            #   项目统一布局     <root>/images/<split>/<文件名>   （data/lab_ppe）
             sp, name = rel.split("/", 1)
-            ip = root / sp / "images" / name
-            lp = root / sp / "labels" / (Path(name).stem + ".txt")
-            jobs.append((ip, lp, names))
+            stem = Path(name).stem
+            if (root / sp / "images").is_dir():
+                ip = root / sp / "images" / name
+                lp = root / sp / "labels" / (stem + ".txt")
+            else:
+                ip = root / "images" / sp / name
+                lp = root / "labels" / sp / (stem + ".txt")
+            jobs.append((ip, lp, names, targets))
     else:
         srcs = args.src or [f"data/b3_clean/{s}/images" for s in ("train", "valid", "test")]
         for src in map(Path, srcs):
@@ -142,7 +189,22 @@ def main():
             imgs = sorted(p for p in src.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
             if args.limit:
                 imgs = imgs[: args.limit]
-            jobs += [(p, p.parent.parent / "labels" / (p.stem + ".txt"), names) for p in imgs]
+            jobs += [(p, resolve_label(p), names, targets) for p in imgs]
+
+    # 按类别筛图：只保留标注里含目标类别的图片
+    if targets is not None:
+        before = len(jobs)
+        kept = []
+        for ip, lp, nm, tg in jobs:
+            if not lp.exists():
+                continue
+            for line in lp.read_text(encoding="utf-8").splitlines():
+                p = line.split()
+                if len(p) == 5 and p[0].lstrip("-").isdigit() and int(float(p[0])) in targets:
+                    kept.append((ip, lp, nm, tg))
+                    break
+        jobs = kept
+        print(f"[类别筛图] 含目标类别的图片 {len(jobs)}/{before} 张")
 
     if args.random and args.random < len(jobs):
         import random
@@ -150,11 +212,11 @@ def main():
         print(f"[随机抽查] 抽取 {len(jobs)} 张")
 
     n = 0
-    for ip, lp, names in jobs:
+    for ip, lp, names, tg in jobs:
         if not ip.exists():
             print(f"[跳过] 图片不存在: {ip}")
             continue
-        img = draw(ip, lp, names)
+        img = draw(ip, lp, names, tg)
         if img is None:
             print(f"[跳过] 读图失败: {ip}")
             continue
