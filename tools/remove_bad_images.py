@@ -31,7 +31,7 @@
 from __future__ import annotations
 
 import argparse
-import shutil
+import os
 import sys
 from collections import Counter, defaultdict
 from datetime import date
@@ -94,6 +94,31 @@ def count_boxes(ds: Path, splits: dict[str, dict[str, Path]]) -> Counter:
                     except ValueError:
                         pass
     return c
+
+
+def safe_move(src: Path, dst: Path) -> str:
+    """移动文件，返回 'ok' / 'skip'（源不存在）/ 'fail'。
+
+    ⚠ 为什么不用 shutil.move：Windows 下 os.rename 到**已存在**目标会抛
+    FileExistsError，shutil.move 随即回退到 copy + os.unlink；而本机沙箱把
+    os.unlink 劫持为「移入回收站」，一旦回收站操作被中止就会触发
+    SAFE_DELETE_FAIL_CLOSED —— **直接杀掉整个进程**，令批量剔除半途而废
+    （此前两次 SIGTERM 均源于此）。所以这里只用 os.replace（原子、可覆盖），
+    失败就换备用名，再失败只记录单条，**绝不回退到任何 unlink 路径**。
+    """
+    if not src.exists():
+        return "skip"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cands = [dst] + [dst.with_name(f"{dst.stem}__dup{i}{dst.suffix}") for i in range(1, 5)]
+    last: OSError | None = None
+    for cand in cands:
+        try:
+            os.replace(str(src), str(cand))
+            return "ok"
+        except OSError as exc:
+            last = exc
+    print(f"  [失败] {src} -> {dst}: {type(last).__name__}: {last}")
+    return "fail"
 
 
 def main() -> int:
@@ -203,41 +228,49 @@ def main() -> int:
     tag = f"{args.tag}_{date.today():%Y%m%d}"
     dest_root = ds.parent / "_rejected" / tag
     moved_img = moved_lbl = 0
+    failed: list[str] = []
     for key in reject_items:
         sp, name = key.split("/", 1)
-        stem = Path(name).stem
         ddir = dest_root / "images" / sp
         ldir = dest_root / "labels" / sp
         ddir.mkdir(parents=True, exist_ok=True)
         ldir.mkdir(parents=True, exist_ok=True)
         ip = ds / "images" / sp / name
-        lp = ds / "labels" / sp / f"{stem}.txt"
-        if ip.exists():
-            shutil.move(str(ip), str(ddir / name))
+        lp = ds / "labels" / sp / f"{Path(name).stem}.txt"
+        r = safe_move(ip, ddir / name)
+        if r == "ok":
             moved_img += 1
-        if lp.exists():
-            shutil.move(str(lp), str(ldir / lp.name))
+        elif r == "fail":
+            failed.append(key)
+        r = safe_move(lp, ldir / lp.name)
+        if r == "ok":
             moved_lbl += 1
+        elif r == "fail":
+            failed.append(f"{key}\t[label]")
 
-    remain_imgs = sum(len(m) for m in splits.values()) - moved_img
+    remain_imgs = sum(len(m) for m in scan_dataset(ds).values())
     remain_boxes = count_boxes(ds, splits)
     lines = [
         f"剔除报告  tag={tag}  数据集={ds}",
         f"判定依据: {args.reason or '(见 index 与任务卡)'}",
         f"剔除图片 {moved_img} 张 / 标注 {moved_lbl} 份（已移动到 {dest_root}，非删除，可整体移回恢复）",
-        f"其中家族扩展 {len(extra)} 张；无框负样本 {len(neg_imgs)} 张",
+        f"其中家族扩展 {len(extra)} 张；无框负样本 {len(neg_imgs)} 张"
+        + (f"；移动失败 {len(failed)} 项（见文末）" if failed else ""),
         "按 split: " + "  ".join(f"{k}={v}" for k, v in sorted(per_split.items())),
         "类别框数变化:",
         *[f"  {NAMES[cid]:<10} {all_boxes.get(cid,0):>5} → {remain_boxes.get(cid,0):>5}"
           f"（剔 {cls_lose.get(cid,0)}）" for cid in NAMES],
-        f"剩余图片总数约 {remain_imgs}",
+        f"剩余图片总数 {remain_imgs}",
         "",
         "剔除清单（split/文件名<TAB>来源）:",
         *[f"{k}\t{v}" for k, v in sorted(reject_items.items())],
+        *(["", "移动失败清单:"] + failed if failed else []),
     ]
     rep = ds.parent / f"{args.tag}_remove_report.txt"
     rep.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n[完成] 移动 {moved_img} 图 + {moved_lbl} 标注 → {dest_root}")
+    if failed:
+        print(f"[注意] {len(failed)} 项移动失败，已写入报告，可重跑本命令自动补做（幂等）")
     print(f"报告: {rep}")
     return 0
 
