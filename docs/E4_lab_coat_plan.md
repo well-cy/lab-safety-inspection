@@ -123,6 +123,19 @@
 5. **lab_coat 与 mask 收尾清理（2026-09-22 完成）**：lab_coat 几何复查（`outputs/labcoat_review/flags_v2/`）判定 **1 号（g50 框过大）、4 号（g103 框过小）不合格**，剔 **4 张**（`data/_rejected/labcoat_bad_20260922/`）。mask 改为「先自动去脏、再人工审」：用图像特征筛查（`tools/screen_dirty_graphics.py`：白底占比/主色调占比/低边缘密度平坦区）从 1719 张筛出 249 张可疑，其中**白底目录图 90 张高置信已剔**（`data/_rejected/mask_dirty_white_20260922/`），纯色棚拍 155 张保留待复核。本步后数据集 **18170 张**（原文档"mask 无需处理"的结论已由本条取代）。
 6. **全库 pHash 近重复去重（2026-09-22 完成，方案 B）**：人工抽检发现"**大量重复样本但框选正确**"——同一视频连帧/同机位多拍被反复计入，且存在 **586 组跨 split 泄漏**（同图同时落在 train 与 valid/test）。新增 `tools/dedup_phash.py` 全库扫描：64 位 DCT pHash + LSH 候选分桶 + **严格代表聚类**（只与已保留代表比对，杜绝 A~B~C 链式误并）+ **标注感知二次分桶**（同组内须框 IoU≥0.85 且匹配率≥0.9 才算真冗余，避免"同机位但人已位移"的相邻帧被误杀）。扫描 18170 张得 2416 组 / 10156 张卷入。**采用方案 B：每组最多保留 3 张**，剔除 **4619 张** 至 `data/_rejected/phash_dedup_20260922/`（含 3982 张无框背景连帧），报告 `data/phash_dedup_remove_report.txt`，清单 `data/index_phash_dedup_k3.txt`。因代表聚类是贪心式的，剔掉一批后剩余样本的邻接关系会重排，故重扫收敛：**第二轮再剔 64 张、第三轮 13 张**（`data/_rejected/phash_dedup_r2/r3_20260922/`），逐轮 64→13 递减，已到噪声量级，判定收敛。**去重后数据集 13474 张**（原 18320 → 剔 lab_coat 4 + mask 90 + 去重 4696）：四类框 mask 1974 / gloves 10601 / lab_coat 2086 / goggles 6589（共 21250），背景负样本 2593（19.2%，去重前 6646 张里冗余背景占 61%），孤立图片 0，图文一一对应已校验。
    **⚠️ 未完全消除的残留风险——跨 split 同源**：方案 B 有意每组留 3 张，这些互为近重复的图仍可能分处 train/valid/test。首轮扫描时跨 split 组 586 组，末轮仍有 **390 组 / 900 张**（绝大多数是同一视频的相邻连帧，如 `ppes_helmet*`、`ppes_frame*`）。**若 E4 训练要求严格无泄漏，正确做法不是在图片粒度继续剔，而是在划分阶段按「原图家族／近重复连通分量」整组划分**（同一连通分量整体进 train 或整体进 valid/test）。当前 split 沿用原有划分，此项留待 C1 划分环节处理，需在 E4 报告中如实标注。
+7. **mask 类专项收紧（2026-09-22，方案 B 后的定向补刀）**：人工复查 `outputs/mask_review/` 仍觉 mask 观感重复，分两层诊断——① **来源层**：含 mask 框的 1522 张图来自 **1273 个原图家族**，平均 **1.20 张/家族**、1145 个（90%）家族仅 1 张，**家族级重复已清干净**；② **内容层**：pHash 仍剩 124 组（全为 2–3 张小组），典型是**同一视频连帧**（如 `4121322-uhd_3840_2160_25fps_mp4-0019/0020/0021` 三帧连续、且跨 train/valid）。根因是方案 B 允许每组留 3 张，连帧因此幸存。处置：**对 mask 类单独收紧为 keep=1**，再剔 **168 张**（全部带框，非背景负样本）至 `data/_rejected/mask_dedup_k1_20260922/`，复扫 **重复组 0 / 跨 split 泄漏 0**，完全收敛。另剔超小框复查判不合格的 2 个家族 4 张（`data/_rejected/mask_bad_20260922/`：26_png、w-12-）。**mask 现状 1354 张图 / 1799 框**，为四类中最薄，需外部补充。
+8. **mask 补充数据候选（2026-09-22 调研，未下载）**：mask 是当前唯一"量偏少且域单一"的类别。入库前必须过三关：**与 dataset1/dataset2 红线去重 → `tools/dedup_phash.py` 同源检测 → 水印/图库图筛查**（B3 的 crop 坐标未重映射事故为前车之鉴）。
+
+| 候选 | 量 | 类 | 许可 | 域匹配 | 备注 |
+|---|---|---|---|---|---|
+| `epidetect/ppe-wlllw` | 1.8k | HELMET/MASK/GLASS/VEST/GLOVE/PERSON/BOOTS | CC BY 4.0 | 高（工业安全） | 独立来源，与 ppes 系无同源嫌疑，**首选** |
+| `saba/ppedetection` | 364 | Coverall/Face_Shield/Gloves/Goggles/Mask | CC BY 4.0 | 高（PPE 齐全） | 量小但类映射度最佳，可与 coverall 一并补 |
+| Kaggle `aiotthien/personal-protection-equipment-datasets` | 8086 | 16 类含 Face-mask | 页面标 MIT，源 Roboflow 标 Private | 中高 | 类定义（Face-mask/Glasses/Gloves/Safety-suit/Person + 暴露部位）与本项目极契合，**许可存疑，须先核实** |
+| `maskfacedatasetpublic/maskfacedataset-mswcx` | 5.4k | mask/face/incorrect | CC BY 4.0 | 低（公共场合人脸特写） | 量最大、含"不规范佩戴"类；域差大，宜作**口罩外观多样性**补充而非主力 |
+| `personal-protective-equipment/ppes-kaxsi` v8 | 24924 | 同 v7 | CC BY 4.0 | 高 | **与已入库 v7 同源**（v7 的 11978 张已入库 11973），仅在有新增独立帧时取用，防泄漏 |
+| B1 组长自采 | 150 | 全类 | 自有 | **最高** | 唯一能治"实验室域缺失"的选项，仍是硬前置 |
+
+> 判断：外部 PPE 数据集普遍是"工厂/工地"域，与实验台场景仍有距离，**引入外部的边际收益低于把 B1 自采做扎实**；上表宜作补充而非替代。
 
 > ⚠️ 工具坑位记录：本机 WorkBuddy 沙箱把 `os.unlink` 劫持为「移入回收站」，回收站操作被中止时触发 `SAFE_DELETE_FAIL_CLOSED` **直接杀进程**（表现为莫名其妙的 SIGTERM）；且 Windows 下 `os.rename` 到已存在目标必失败，`shutil.move` 会回退到 `copy + unlink` 而踩中该雷。故 `remove_bad_images.py` 已改为**只用 `os.replace`（原子可覆盖）+ 失败换备用名 + 单条失败不中断**，绝不回退到任何 unlink 路径。
 
