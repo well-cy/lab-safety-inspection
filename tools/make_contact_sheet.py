@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -69,12 +70,22 @@ def build_jobs(args, root: Path):
     targets = None
     if args.only_class:
         targets = set()
+        # 除项目内置映射外，也接受该 root 下 data.yaml 里的类别名（大小写不敏感）
+        name2id = dict(CLASS_ID)
+        yml = root / "data.yaml"
+        if yml.exists():
+            try:
+                import yaml
+                for i, nm in enumerate(yaml.safe_load(yml.read_text(encoding="utf-8")).get("names", [])):
+                    name2id[str(nm).strip().lower()] = i
+            except Exception:
+                pass
         for tok in args.only_class.split(","):
             tok = tok.strip().lower()
             if tok.isdigit():
                 targets.add(int(tok))
-            elif tok in CLASS_ID:
-                targets.add(CLASS_ID[tok])
+            elif tok in name2id:
+                targets.add(name2id[tok])
         print(f"[类别过滤] 只画类别 {sorted(targets)}")
 
     jobs = []
@@ -99,11 +110,13 @@ def build_jobs(args, root: Path):
     else:
         names = load_names(root, args.names)
         print(f"[全库扫描] {root}  类别映射={names}")
-        for ld in sorted((root / "labels").glob("*")):
-            if not ld.is_dir():
-                continue
-            sp = ld.name
-            idir = root / "images" / sp
+        if (root / "labels").is_dir():
+            label_dirs = [(sp, root / "labels" / sp, root / "images" / sp)
+                          for sp in sorted(p.name for p in (root / "labels").iterdir() if p.is_dir())]
+        else:  # raw 数据集布局: <root>/<split>/{images,labels}
+            label_dirs = [(sp, root / sp / "labels", root / sp / "images")
+                          for sp in ("train", "valid", "test") if (root / sp / "labels").is_dir()]
+        for sp, ld, idir in label_dirs:
             for lp in sorted(ld.glob("*.txt")):
                 lines = [l.split() for l in lp.read_text(encoding="utf-8").splitlines() if l.strip()]
                 if targets is not None:
@@ -137,6 +150,25 @@ def build_jobs(args, root: Path):
         jobs = kept
         print(f"[类别筛图] 含目标类别的 {len(jobs)}/{before} 张")
 
+    # 批次过滤：只看文件名（.rf. 之前）匹配正则的图，用于按"批次/来源"抽检
+    if args.filter_regex:
+        rx = re.compile(args.filter_regex)
+        before = len(jobs)
+        jobs = [j for j in jobs if rx.match(j[0].name.split(".rf.")[0])]
+        print(f"[批次过滤] {args.filter_regex} 命中 {len(jobs)}/{before} 张")
+
+    # 每族取一：同一原始照片（.rf. 之前的部分）只留一张代表，人工量降到 1/N
+    if args.one_per_family:
+        seen, kept = set(), []
+        for job in jobs:
+            fam = job[0].name.split(".rf.")[0]
+            if fam in seen:
+                continue
+            seen.add(fam)
+            kept.append(job)
+        jobs = kept
+        print(f"[每族取一] 剩 {len(jobs)} 张（每个原始照片家族 1 张代表）")
+
     if args.random and args.random < len(jobs):
         random.seed(args.seed)
         jobs = random.sample(jobs, args.random)
@@ -161,6 +193,10 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--full", action="store_true", help="额外导出原尺寸带框图到 <out>/full/")
+    ap.add_argument("--filter-regex", default="",
+                    help="只保留文件名（.rf. 之前）匹配该正则的图，如 '^(screenshot|IMG-\\\\d{8}-WA)'")
+    ap.add_argument("--one-per-family", action="store_true",
+                    help="同一原始照片家族只留 1 张代表（按批次判断时用，人工量降到 1/N）")
     ap.add_argument("--start-index", type=int, default=1, help="编号起始（多批续编时用）")
     args = ap.parse_args()
 
