@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="zh-CN" data-page-node-id="dbrw5Nob8lhkEh8lwwAu3n">
+<head data-page-node-id="k50VRBcRcCcWjkepg0CmnI">
+<meta charset="utf-8" data-page-node-id="HbtchdBUwulvRawYoxc4UW">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="7SYItkBu6tdukKGfNuPA9o">
 <title>LAB-PPE 离线标注器</title>
 <style>
   :root {
@@ -88,55 +88,55 @@
   input[type=file] { display: none; }
 </style>
 </head>
-<body>
+<body data-page-node-id="ec0egS6X6GZX0nVlo1zKGt">
 
-<header>
-  <h1>LAB-PPE 标注器</h1>
-  <span class="meta" id="hMeta">未载入图片</span>
-  <span class="spacer"></span>
-  <button class="btn" id="btnImgs">选择图片文件夹</button>
-  <button class="btn" id="btnPre">载入已有标注</button>
-  <button class="btn" id="btnExport">导出 ZIP</button>
-  <button class="btn" id="btnClearAll">清空全部</button>
+<header data-page-node-id="4mqHYNG51W5kXbZn2MngCk">
+  <h1 data-page-node-id="iVzVdYv0IugdNL9j4WkqQo">LAB-PPE 标注器</h1>
+  <span class="meta" id="hMeta" data-page-node-id="REGVcDUKZeKlOpCQOOsDH1">未载入图片</span>
+  <span class="spacer" data-page-node-id="ASYBuAITtrWfzoMp2lkxwi"></span>
+  <button class="btn" id="btnImgs" data-page-node-id="6rmSOw5FPoX0ZWOsvABukb">选择图片文件夹</button>
+  <button class="btn" id="btnPre" data-page-node-id="NiICp4RsAw1L2y6LoCLXjV">载入已有标注</button>
+  <button class="btn" id="btnExport" data-page-node-id="0wy2ZqsAxZRuhTNJLKGRCF">导出 ZIP</button>
+  <button class="btn" id="btnClearAll" data-page-node-id="YRe2tDst8ankTlWZRNdoGD">清空全部</button>
 </header>
 
-<main>
-  <div id="stage">
-    <canvas id="cv" width="800" height="600"></canvas>
-    <div id="drop"><div class="card">
-      <h3>离线标注器 · 零依赖 · 零联网</h3>
-      <p>点右上角 <b>选择图片文件夹</b>，选中 <code>data/raw/web_lab/images</code> 或 B1 自采照片目录。</p>
-      <p>类别热键 <code>1</code> mask · <code>2</code> gloves · <code>3</code> lab_coat · <code>4</code> goggles</p>
-      <p>鼠标拖拽画框 · <code>Enter</code> 存并下一张 · <code>← →</code> 翻页 · <code>A</code> 标为不合格 · <code>D</code> 删框</p>
-      <p style="color:var(--warn)">铁律：图里出现的 PPE <b>必须全部标出</b>，漏标会被当成背景负样本。</p>
+<main data-page-node-id="2GCs3cCHaGXUOolUAEZjjn">
+  <div id="stage" data-page-node-id="yuyvNv0bSCtcJ8p90l3kCj">
+    <canvas id="cv" width="800" height="600" data-page-node-id="J33jkP1R3Qv8Hkb0ICzYX8"></canvas>
+    <div id="drop" data-page-node-id="ramxTmfvQI2eAY8m0dSFtn"><div class="card" data-page-node-id="lL65djlWCG11KKSH0U7pfT">
+      <h3 data-page-node-id="a7Dcg2S1iDPq4T0tHttGbD">离线标注器 · 零依赖 · 零联网</h3>
+      <p data-page-node-id="HaAfqqk8CrF3YCBi3wsjo0">点右上角 <b data-page-node-id="3XxliABdsRNRW7EoVGOYp4">选择图片文件夹</b>，选中 <code data-page-node-id="36AqxwKGzWXwdtHXCzGubO">data/raw/web_lab/images</code> 或 B1 自采照片目录。</p>
+      <p data-page-node-id="1i0Y2bk2gk2770aQOSF9o0">类别热键 <code data-page-node-id="ybA2E8dw4xOVA7FFVnLsJ4">1</code> mask · <code data-page-node-id="3DjClG6tzHUj33CIFqfMQH">2</code> gloves · <code data-page-node-id="qZr93b72S2XYG7R3KG3vBM">3</code> lab_coat · <code data-page-node-id="volcLgWCSl7gJcIZ6bcxRP">4</code> goggles</p>
+      <p data-page-node-id="a2QD6ubioyDAnc1YoecNrC">鼠标拖拽画框 · <code data-page-node-id="XbnICYsbXeCo63N1utFgVo">Enter</code> 存并下一张 · <code data-page-node-id="Vi4VDDsPzesGFswRPnrugC">← →</code> 翻页 · <code data-page-node-id="k0nJ9dVyDJzh2tAh5rDxlc">A</code> 标为不合格 · <code data-page-node-id="9zZRLfljySiYBY5hTLunaB">D</code> 删框</p>
+      <p style="color:var(--warn)" data-page-node-id="0UT1Tg6Aq1z1IrSG8THuCJ">铁律：图里出现的 PPE <b data-page-node-id="Y7f1RjBHGDwrLsbOyWBCWI">必须全部标出</b>，漏标会被当成背景负样本。</p>
     </div></div>
   </div>
 
-  <aside>
-    <section>
-      <h2>类别（热键切换）</h2>
-      <div class="legend" id="legend"></div>
+  <aside data-page-node-id="zq4wLe130HV9SfG1t15Q5D">
+    <section data-page-node-id="h2NL84NxhlQVxIs8yOqzZz">
+      <h2 data-page-node-id="nCFEJq8L6sNuEsrTAJOAyD">类别（热键切换）</h2>
+      <div class="legend" id="legend" data-page-node-id="0HAKpdzBnCYEMOZWMAbbk0"></div>
     </section>
-    <section>
-      <h2>本图标注框</h2>
+    <section data-page-node-id="evdCdont4A8RzbdE8le1Dh">
+      <h2 data-page-node-id="EYUD0IBQgc56pmzMyGsrm9">本图标注框</h2>
     </section>
-    <div id="boxes"></div>
-    <section style="padding:8px 10px">
-      <h2>图片列表</h2>
+    <div id="boxes" data-page-node-id="HZkPKenPMSHZwvDchoh07D"></div>
+    <section style="padding:8px 10px" data-page-node-id="UhOyZdrNzTYfDWEakx8NOx">
+      <h2 data-page-node-id="pTxzKBSogSYkdBaOBPlMey">图片列表</h2>
     </section>
-    <div id="list"></div>
-    <div class="foot">
-      <div class="hint">
-        <b>Enter</b> 存并下一张　<b>A</b> 不合格　<b>R</b> 清空本图<br>
-        <b>D</b> 删选中框　<b>← →</b> 上/下一张　<b>滚轮</b> 缩放　<b>空格拖</b> 平移
+    <div id="list" data-page-node-id="nRq3SquVhALwtnpuGUfprH"></div>
+    <div class="foot" data-page-node-id="YyQamXi0xZo4qavGy3kC9L">
+      <div class="hint" data-page-node-id="o7aUMCPZAjICUoNB2AkWYF">
+        <b data-page-node-id="INTRZohxrkky1dvGDGqCto">Enter</b> 存并下一张　<b data-page-node-id="mHzUaWHFytn0XGIVcQHmdG">A</b> 不合格　<b data-page-node-id="FRb2hKsIGFvDO1FXxvqXGH">R</b> 清空本图<br data-page-node-id="pjuNV9fJV7qoT530wEj0hS">
+        <b data-page-node-id="MtjkGS760w2OQFXHdtwBjX">D</b> 删选中框　<b data-page-node-id="iYolkF2E83M0TcPIIhgzeT">← →</b> 上/下一张　<b data-page-node-id="AONPLxOkB51LmFFy3y47Ly">滚轮</b> 缩放　<b data-page-node-id="IcfZhIEaOS9OPlsxCPyXqp">空格拖</b> 平移
       </div>
     </div>
   </aside>
 </main>
 
-<div id="toast"></div>
-<input type="file" id="fImgs" webkitdirectory directory multiple>
-<input type="file" id="fPre" webkitdirectory directory multiple>
+<div id="toast" data-page-node-id="8eDeLo8wajdJxiPrabkty0"></div>
+<input type="file" id="fImgs" webkitdirectory directory multiple data-page-node-id="82UbrsuuWqXVRYG0aDQjYD">
+<input type="file" id="fPre" webkitdirectory directory multiple data-page-node-id="vEHZPUIGNB9g75N6OBIaF7">
 
 <script>
 "use strict";
