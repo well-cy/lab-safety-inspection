@@ -89,14 +89,88 @@ def iter_labeled(cls_id: int, splits: list[str]):
                 yield sp, lp
 
 
+def extra_stats(img) -> dict:
+    """额外指标：亮度（域偏移参考）、彩色度（识黑白老照片）。"""
+    small = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+    v = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)[..., 2].astype(np.float32) / 255.0
+    b, g, r = small[..., 0].astype(np.float32), small[..., 1].astype(np.float32), small[..., 2].astype(np.float32)
+    colorf = float((np.abs(r - g).mean() + np.abs(g - b).mean() + np.abs(r - b).mean()) / 3.0)
+    return dict(bright=float(v.mean()), colorf=colorf)
+
+
+def scan_raw(d: Path, tsv_out: Path | None) -> int:
+    """裸目录模式：筛查一批**未标注**候选图（网页采集池、B1 自采原片等）。"""
+    exts = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+    imgs = sorted(p for p in d.iterdir() if p.suffix.lower() in {e.lower() for e in exts})
+    print(f"[筛查/裸目录] {d}")
+    print(f"  受检图片 {len(imgs)} 张")
+
+    rows, hits, unread = [], {}, []
+    gray_like = []
+    for p in imgs:
+        img = imread_unicode(p)
+        if img is None:
+            unread.append(p.name)
+            rows.append((p.name, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "unreadable"))
+            continue
+        h, w = img.shape[:2]
+        st = image_stats(img)
+        ex = extra_stats(img)
+        tag = classify(st)
+        if tag is None and ex["colorf"] < 6.0:
+            tag = "grayscale_like"
+            gray_like.append(p.name)
+        if tag:
+            hits.setdefault(tag, []).append(p.name)
+        rows.append((p.name, w, h, round(ex["bright"], 4), round(ex["colorf"], 3),
+                     round(st["white"], 4), round(st["dom"], 4),
+                     round(st["flat"], 4), round(st["edge"], 4), tag or "ok"))
+
+    for tag, files in sorted(hits.items()):
+        print(f"  {tag}: {len(files)} 张")
+    n_hit = sum(len(v) for v in hits.values())
+    print(f"  合计可疑 {n_hit} 张（{n_hit/max(len(imgs),1):.1%}）")
+    if unread:
+        print(f"  无法读取 {len(unread)} 张")
+
+    if tsv_out:
+        tsv_out.parent.mkdir(parents=True, exist_ok=True)
+        hdr = ["name", "width", "height", "bright", "colorf",
+               "white", "dom", "flat", "edge", "flag"]
+        with tsv_out.open("w", encoding="utf-8", newline="") as f:
+            f.write("\t".join(hdr) + "\n")
+            for r in rows:
+                f.write("\t".join(str(x) for x in r) + "\n")
+        print(f"[明细] {tsv_out}")
+
+    if hits:
+        out = d.parent / "flags_dirty_raw.txt"
+        allf = sorted(f for v in hits.values() for f in v)
+        tag_of = {f: t for t, files in hits.items() for f in files}
+        out.write_text(
+            "# 裸目录脏图筛查命中（非实拍/黑白老照片）\n" +
+            "\n".join(f"{i+1}\t{f}\tdirty:{tag_of[f]}" for i, f in enumerate(allf)) + "\n",
+            encoding="utf-8")
+        print(f"[清单] {out}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--class", dest="cls", required=True, help="类名或 id：mask/gloves/lab_coat/goggles")
+    ap.add_argument("--class", dest="cls", default="", help="类名或 id：mask/gloves/lab_coat/goggles（数据集模式必填）")
     ap.add_argument("--splits", default="train,valid,test")
+    ap.add_argument("--dir", default="", help="裸目录模式：直接筛查该目录下所有图片（无需标注）")
+    ap.add_argument("--tsv", default="", help="裸目录模式：输出逐图指标明细 TSV")
     ap.add_argument("--thumbs", default="", help="导出命中图的缩略图版目录（可选）")
     ap.add_argument("--out", default="", help="剔除索引输出路径（默认 data/flags_dirty_<class>.txt）")
     ap.add_argument("--apply", action="store_true", help="写出剔除索引（不移动文件，移动用 remove_bad_images.py）")
     args = ap.parse_args()
+
+    if args.dir:
+        return scan_raw(Path(args.dir),
+                        Path(args.tsv) if args.tsv else None)
+    if not args.cls:
+        ap.error("需要 --class（数据集模式）或 --dir（裸目录模式）")
 
     tok = args.cls.strip().lower()
     cid = int(tok) if tok.isdigit() else NAMES.index(tok)

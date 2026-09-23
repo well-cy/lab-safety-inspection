@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LAB-PPE 离线标注器</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --panel2: #23272f; --line: #343a46;
+    --fg: #e8ecf2; --fg-dim: #9aa4b2; --accent: #4c8dff;
+    --c0: #29b6f6; --c1: #ff9800; --c2: #22c55e; --c3: #c026d3;
+    --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: 0 0 auto;
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header .meta { color: var(--fg-dim); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .btn {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.12); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; overflow: hidden; background:
+    repeating-conic-gradient(#191c21 0 25%, #1e2127 0 50%) 0 0/22px 22px; }
+  canvas { position: absolute; box-shadow: 0 0 0 1px var(--line); cursor: crosshair; }
+  aside {
+    width: 260px; flex: 0 0 260px; background: var(--panel);
+    border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0;
+  }
+  aside section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--fg-dim); margin: 0 0 8px; font-weight: 600; }
+  .legend { display: flex; flex-direction: column; gap: 4px; }
+  .legend div { display: flex; align-items: center; gap: 7px; font-size: 12px;
+    padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+  .legend div:hover { background: var(--panel2); }
+  .legend div.on { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--accent); }
+  .dot { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .kbd { margin-left: auto; font: 11px ui-monospace, monospace; color: var(--fg-dim);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  #boxes { flex: 1; overflow: auto; padding: 8px 10px; }
+  .brow { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px;
+    font: 11px ui-monospace, monospace; cursor: pointer; }
+  .brow:hover { background: var(--panel2); }
+  .brow.on { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--accent); }
+  .brow .nm { flex: 1; }
+  .foot { padding: 8px 10px; border-top: 1px solid var(--line); display: flex;
+    flex-direction: column; gap: 6px; }
+  .hint { color: var(--fg-dim); font-size: 11px; line-height: 1.7; }
+  .hint b { color: var(--fg); font-weight: 600; }
+  #list { max-height: 190px; overflow: auto; padding: 6px 8px; }
+  .irow { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px;
+    font-size: 11px; cursor: pointer; color: var(--fg-dim); }
+  .irow:hover { background: var(--panel2); }
+  .irow.cur { background: var(--accent); color: #fff; }
+  .irow .st { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+    background: #4b5262; }
+  .irow.has .st { background: var(--ok); }
+  .irow.skip .st { background: var(--bad); }
+  .irow .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #drop { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; text-align: center; padding: 40px; color: var(--fg-dim);
+    pointer-events: none; }
+  #drop .card { background: var(--panel); border: 1px dashed var(--line);
+    border-radius: 12px; padding: 28px 34px; max-width: 560px; pointer-events: auto; }
+  #drop h3 { margin: 0 0 10px; font-size: 15px; color: var(--fg); }
+  #drop p { margin: 6px 0; font-size: 12px; }
+  code { background: var(--panel2); padding: 1px 5px; border-radius: 4px;
+    font: 11px ui-monospace, monospace; color: var(--c0); }
+  #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 16px; font-size: 12px; opacity: 0; transition: opacity .18s;
+    pointer-events: none; z-index: 50; }
+  #toast.on { opacity: 1; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LAB-PPE 标注器</h1>
+  <span class="meta" id="hMeta">未载入图片</span>
+  <span class="spacer"></span>
+  <button class="btn" id="btnImgs">选择图片文件夹</button>
+  <button class="btn" id="btnPre">载入已有标注</button>
+  <button class="btn" id="btnExport">导出 ZIP</button>
+  <button class="btn" id="btnClearAll">清空全部</button>
+</header>
+
+<main>
+  <div id="stage">
+    <canvas id="cv" width="800" height="600"></canvas>
+    <div id="drop"><div class="card">
+      <h3>离线标注器 · 零依赖 · 零联网</h3>
+      <p>点右上角 <b>选择图片文件夹</b>，选中 <code>data/raw/web_lab/images</code> 或 B1 自采照片目录。</p>
+      <p>类别热键 <code>1</code> mask · <code>2</code> gloves · <code>3</code> lab_coat · <code>4</code> goggles</p>
+      <p>鼠标拖拽画框 · <code>Enter</code> 存并下一张 · <code>← →</code> 翻页 · <code>A</code> 标为不合格 · <code>D</code> 删框</p>
+      <p style="color:var(--warn)">铁律：图里出现的 PPE <b>必须全部标出</b>，漏标会被当成背景负样本。</p>
+    </div></div>
+  </div>
+
+  <aside>
+    <section>
+      <h2>类别（热键切换）</h2>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section>
+      <h2>本图标注框</h2>
+    </section>
+    <div id="boxes"></div>
+    <section style="padding:8px 10px">
+      <h2>图片列表</h2>
+    </section>
+    <div id="list"></div>
+    <div class="foot">
+      <div class="hint">
+        <b>Enter</b> 存并下一张　<b>A</b> 不合格　<b>R</b> 清空本图<br>
+        <b>D</b> 删选中框　<b>← →</b> 上/下一张　<b>滚轮</b> 缩放　<b>空格拖</b> 平移
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+<input type="file" id="fImgs" webkitdirectory directory multiple>
+<input type="file" id="fPre" webkitdirectory directory multiple>
+
+<script>
+"use strict";
+
+/* ============================ 类别定义 ============================ */
+const CLASSES = [
+  { id: 0, key: "1", name: "mask",     color: "#29b6f6" },
+  { id: 1, key: "2", name: "gloves",   color: "#ff9800" },
+  { id: 2, key: "3", name: "lab_coat", color: "#22c55e" },
+  { id: 3, key: "4", name: "goggles",  color: "#c026d3" },
+];
+const IMG_EXT = /\.(jpe?g|png)$/i;
+const LS_KEY = "labppe.labeler.v1";
+
+/* ============================ 状态 ============================ */
+let files = [];             // [{name, url, file}]
+let idx = -1;
+let labels = {};            // name -> {boxes:[{c,x,y,w,h}], skip:bool}
+let img = null;             // HTMLImageElement
+let curClass = 2;           // 默认 lab_coat
+let selected = -1;
+let view = { scale: 1, ox: 0, oy: 0 };   // 缩放与平移
+let drag = null;            // 拖拽状态
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+/* ============================ 工具 ============================ */
+const $ = (s) => document.querySelector(s);
+function stem(n) { return n.replace(/\.[^.]+$/, ""); }
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("on"), 1600);
+}
+function rec(name) {
+  if (!labels[name]) labels[name] = { boxes: [], skip: false };
+  return labels[name];
+}
+function persist() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(labels)); } catch (e) {}
+}
+function restore() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) labels = JSON.parse(raw) || {};
+  } catch (e) { labels = {}; }
+}
+
+/* ============================ 画布 ============================ */
+function layout() {
+  const stage = $("#stage");
+  const availW = stage.clientWidth - 24, availH = stage.clientHeight - 24;
+  if (!img) {
+    cv.width = Math.max(200, availW); cv.height = Math.max(200, availH);
+    cv.style.left = "12px"; cv.style.top = "12px";
+    view = { scale: 1, ox: 0, oy: 0 };
+    return { w: cv.width, h: cv.height };
+  }
+  const fit = Math.min(availW / img.naturalWidth, availH / img.naturalHeight);
+  const s = fit * view.scale;
+  const w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
+  cv.width = w; cv.height = h;
+  cv.style.left = Math.round((stage.clientWidth - w) / 2 + view.ox) + "px";
+  cv.style.top = Math.round((stage.clientHeight - h) / 2 + view.oy) + "px";
+  return { w, h };
+}
+function imgRect() { return { x: 0, y: 0, w: cv.width, h: cv.height }; }
+function toPx(b) {  // 归一化 -> 画布像素
+  return { x: b.x * cv.width, y: b.y * cv.height, w: b.w * cv.width, h: b.h * cv.height };
+}
+function toNorm(px) {
+  return { x: px.x / cv.width, y: px.y / cv.height, w: px.w / cv.width, h: px.h / cv.height };
+}
+function evPos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * cv.width / r.width,
+           y: (e.clientY - r.top) * cv.height / r.height };
+}
+function hit(p) {                    // 返回被点中的框索引（后画的优先）
+  const boxes = curBoxes();
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const b = toPx(boxes[i]);
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return i;
+  }
+  return -1;
+}
+function hitHandle(p) {              // 选中框的角把手
+  if (selected < 0 || selected >= curBoxes().length) return null;
+  const b = toPx(curBoxes()[selected]);
+  const R = 9;
+  const hs = { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
+  for (const k in hs) {
+    if (Math.abs(p.x - hs[k][0]) <= R && Math.abs(p.y - hs[k][1]) <= R) return k;
+  }
+  return null;
+}
+
+function curBoxes() { return idx >= 0 ? rec(files[idx].name).boxes : []; }
+
+function draw() {
+  const { w, h } = layout();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!img) { drawEmpty(); return; }
+  ctx.drawImage(img, 0, 0, w, h);
+
+  const boxes = curBoxes();
+  const r = rec(files[idx].name);
+  ctx.lineWidth = Math.max(2, w / 420);
+  ctx.font = `${Math.max(11, w / 58)}px ui-monospace, monospace`;
+  ctx.textBaseline = "top";
+
+  boxes.forEach((b, i) => {
+    const p = toPx(b);
+    const col = CLASSES[b.c].color;
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col + "26";
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+    ctx.strokeRect(p.x, p.y, p.w, p.h);
+    const tag = CLASSES[b.c].name;
+    const tw = ctx.measureText(tag).width + 10;
+    ctx.fillStyle = col;
+    ctx.fillRect(p.x, Math.max(0, p.y - Math.max(15, w / 42)), tw, Math.max(15, w / 42));
+    ctx.fillStyle = "#04070d";
+    ctx.fillText(tag, p.x + 5, Math.max(1, p.y - Math.max(15, w / 42) + 2));
+    if (i === selected) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(p.x - 2, p.y - 2, p.w + 4, p.h + 4);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#fff";
+      const R = 4;
+      [[p.x, p.y], [p.x + p.w, p.y], [p.x, p.y + p.h], [p.x + p.w, p.y + p.h]]
+        .forEach(([hx, hy]) => ctx.fillRect(hx - R, hy - R, R * 2, R * 2));
+    }
+  });
+
+  if (drag && drag.mode === "new" && drag.cur) {
+    const x = Math.min(drag.cur.x, drag.start.x), y = Math.min(drag.cur.y, drag.start.y);
+    const ww = Math.abs(drag.cur.x - drag.start.x), hh = Math.abs(drag.cur.y - drag.start.y);
+    ctx.strokeStyle = CLASSES[curClass].color;
+    ctx.setLineDash([6, 4]); ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, ww, hh); ctx.setLineDash([]);
+  }
+
+  if (r.skip) {
+    ctx.fillStyle = "rgba(239,68,68,.16)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#fca5a5";
+    ctx.font = `bold ${Math.max(16, w / 22)}px sans-serif`;
+    ctx.fillText("已标记不合格（本图不参与训练）", 18, 18);
+  }
+}
+function drawEmpty() {
+  ctx.fillStyle = "#2a2f38";
+  ctx.font = "14px sans-serif";
+  ctx.fillText("暂无图片", 20, 24);
+}
+
+/* ============================ 导航 ============================ */
+function goto(i) {
+  if (!files.length) return;
+  idx = clamp(i, 0, files.length - 1);
+  selected = -1;
+  view = { scale: 1, ox: 0, oy: 0 };
+  const f = files[idx];
+  const im = new Image();
+  im.onload = () => { img = im; draw(); refreshSide(); };
+  im.onerror = () => { img = null; draw(); refreshSide(); toast("图片读取失败: " + f.name); };
+  im.src = f.url;
+  refreshSide();
+}
+function next() { if (idx < files.length - 1) goto(idx + 1); else toast("已是最后一张"); }
+function prev() { if (idx > 0) goto(idx - 1); }
+
+/* ============================ 侧栏 ============================ */
+function refreshSide() {
+  const legend = $("#legend");
+  legend.innerHTML = "";
+  CLASSES.forEach((c) => {
+    const d = document.createElement("div");
+    d.className = c.id === curClass ? "on" : "";
+    d.innerHTML = `<span class="dot" style="background:${c.color}"></span>
+                   <span>${c.name}</span><span class="kbd">${c.key}</span>`;
+    d.onclick = () => { curClass = c.id; refreshSide(); };
+    legend.appendChild(d);
+  });
+
+  const bx = $("#boxes");
+  bx.innerHTML = "";
+  if (idx < 0) return;
+  const boxes = curBoxes();
+  if (!boxes.length) {
+    bx.innerHTML = `<div style="color:var(--fg-dim);font-size:11px;padding:6px">`
+      + (rec(files[idx].name).skip ? "已标记：不合格" : "本图暂无标注框") + `</div>`;
+  }
+  boxes.forEach((b, i) => {
+    const d = document.createElement("div");
+    d.className = "brow" + (i === selected ? " on" : "");
+    d.innerHTML = `<span class="dot" style="background:${CLASSES[b.c].color}"></span>
+      <span class="nm">${CLASSES[b.c].name}</span>
+      <span style="color:var(--fg-dim)">${b.w.toFixed(3)}×${b.h.toFixed(3)}</span>`;
+    d.onclick = () => { selected = i; draw(); refreshSide(); };
+    bx.appendChild(d);
+  });
+
+  const list = $("#list");
+  list.innerHTML = "";
+  files.forEach((f, i) => {
+    const r = labels[f.name];
+    const cls = "irow" + (i === idx ? " cur" : "") + (r ? (r.skip ? " skip" : (r.boxes.length ? " has" : "")) : "");
+    const d = document.createElement("div");
+    d.className = cls;
+    d.innerHTML = `<span class="st"></span><span class="tx">${i + 1}. ${f.name}</span>`;
+    d.onclick = () => goto(i);
+    list.appendChild(d);
+  });
+
+  const done = files.filter((f) => labels[f.name] && (labels[f.name].skip || labels[f.name].boxes.length)).length;
+  $("#hMeta").textContent = idx >= 0
+    ? `${idx + 1} / ${files.length}　已标注 ${done}　本图 ${curBoxes().length} 框　${files[idx].name}`
+    : "未载入图片";
+}
+
+/* ============================ 交互 ============================ */
+cv.addEventListener("mousedown", (e) => {
+  if (!img || idx < 0) return;
+  const p = evPos(e);
+  if (e.button === 1 || e.getModifierState("Space")) {
+    drag = { mode: "pan", start: p, ox: view.ox, oy: view.oy, cur: p };
+    return;
+  }
+  if (e.button !== 0) return;
+  const hd = hitHandle(p);
+  if (hd) {
+    drag = { mode: "resize", handle: hd, start: p, cur: p, i: selected,
+             orig: { ...curBoxes()[selected] } };
+    return;
+  }
+  const i = hit(p);
+  if (i >= 0) {
+    selected = i;
+    drag = { mode: "move", start: p, cur: p, i, orig: { ...curBoxes()[i] } };
+    draw(); refreshSide();
+    return;
+  }
+  selected = -1;
+  drag = { mode: "new", start: p, cur: p };
+  draw(); refreshSide();
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!drag) return;
+  const p = evPos(e);
+  drag.cur = p;
+  if (drag.mode === "pan") {
+    view.ox = drag.ox + (p.x - drag.start.x);
+    view.oy = drag.oy + (p.y - drag.start.y);
+    draw();
+    return;
+  }
+  if (drag.mode === "new") { draw(); return; }
+
+  const dx = (p.x - drag.start.x) / cv.width, dy = (p.y - drag.start.y) / cv.height;
+  const o = drag.orig, b = curBoxes()[drag.i];
+  if (drag.mode === "move") {
+    b.x = clamp(o.x + dx, 0, 1 - o.w);
+    b.y = clamp(o.y + dy, 0, 1 - o.h);
+  } else {
+    const hd = drag.handle;
+    let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h;
+    if (hd.includes("w")) x0 = clamp(o.x + dx, 0, x1 - 0.004);
+    if (hd.includes("e")) x1 = clamp(o.x + o.w + dx, x0 + 0.004, 1);
+    if (hd.includes("n")) y0 = clamp(o.y + dy, 0, y1 - 0.004);
+    if (hd.includes("s")) y1 = clamp(o.y + o.h + dy, y0 + 0.004, 1);
+    b.x = x0; b.y = y0; b.w = x1 - x0; b.h = y1 - y0;
+  }
+  draw();
+});
+
+window.addEventListener("mouseup", () => {
+  if (!drag) return;
+  if (drag.mode === "new" && drag.cur) {
+    const x0 = Math.min(drag.start.x, drag.cur.x) / cv.width;
+    const y0 = Math.min(drag.start.y, drag.cur.y) / cv.height;
+    const w = Math.abs(drag.cur.x - drag.start.x) / cv.width;
+    const h = Math.abs(drag.cur.y - drag.start.y) / cv.height;
+    if (w > 0.006 && h > 0.006) {         // 误触过滤
+      const r = rec(files[idx].name);
+      r.boxes.push({ c: curClass, x: x0, y: y0, w, h });
+      r.skip = false;
+      selected = r.boxes.length - 1;
+      persist();
+    }
+  }
+  if (drag && drag.mode !== "new" && drag.i >= 0) persist();
+  drag = null;
+  draw(); refreshSide();
+});
+
+cv.addEventListener("wheel", (e) => {
+  if (!img) return;
+  e.preventDefault();
+  view.scale = clamp(view.scale * (e.deltaY < 0 ? 1.12 : 0.89), 1, 6);
+  draw();
+}, { passive: false });
+
+window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  const k = e.key;
+  const byKey = CLASSES.find((c) => c.key === k);
+  if (byKey) {
+    if (selected >= 0) { curBoxes()[selected].c = byKey.id; persist(); }
+    curClass = byKey.id;
+    draw(); refreshSide();
+    return;
+  }
+  if (k === "Enter" || k === " ") { e.preventDefault(); next(); return; }
+  if (k === "ArrowRight") { next(); return; }
+  if (k === "ArrowLeft") { prev(); return; }
+  if (k === "d" || k === "D" || k === "Delete" || k === "Backspace") {
+    if (selected >= 0) { curBoxes().splice(selected, 1); selected = -1; persist(); draw(); refreshSide(); }
+    return;
+  }
+  if (k === "r" || k === "R") {
+    rec(files[idx].name).boxes = []; selected = -1; persist(); draw(); refreshSide(); return;
+  }
+  if (k === "a" || k === "A") {
+    const r = rec(files[idx].name);
+    r.skip = !r.skip;
+    if (r.skip) r.boxes = [];
+    persist(); draw(); refreshSide();
+    toast(r.skip ? "已标记不合格" : "已取消不合格");
+  }
+});
+
+/* ============================ 载入 / 导出 ============================ */
+$("#btnImgs").onclick = () => $("#fImgs").click();
+$("#btnPre").onclick = () => $("#fPre").click();
+
+$("#fImgs").onchange = (e) => {
+  const list = [...e.target.files].filter((f) => IMG_EXT.test(f.name));
+  if (!list.length) { toast("该目录下没有 jpg/png"); return; }
+  list.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
+  files.forEach((f) => URL.revokeObjectURL(f.url));
+  files = list.map((f) => ({ name: f.name, file: f, url: URL.createObjectURL(f) }));
+  $("#drop").style.display = "none";
+  goto(0);
+  toast(`已载入 ${files.length} 张`);
+};
+
+$("#fPre").onchange = async (e) => {
+  const txts = [...e.target.files].filter((f) => /\.txt$/i.test(f.name));
+  let loaded = 0;
+  for (const f of txts) {
+    const s = stem(f.name);
+    const hitFile = files.find((x) => stem(x.name) === s);
+    if (!hitFile) continue;
+    const text = await f.text();
+    const boxes = [];
+    text.split(/\r?\n/).forEach((line) => {
+      const t = line.trim().split(/\s+/);
+      if (t.length < 5) return;
+      const c = parseInt(t[0], 10);
+      if (!(c >= 0 && c < CLASSES.length)) return;
+      const [x, y, w, h] = t.slice(1, 5).map(Number);
+      if ([x, y, w, h].some((v) => !isFinite(v))) return;
+      boxes.push({ c, x: x - w / 2, y: y - h / 2, w, h });
+    });
+    if (boxes.length) { rec(hitFile.name).boxes = boxes; loaded++; }
+  }
+  persist(); draw(); refreshSide();
+  toast(`已载入 ${loaded} 张预标注，可直接校正`);
+};
+
+/* ---- 导出 ZIP（store 模式，自包含实现）---- */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function buildZip(entries) {          // entries: [{name, data:Uint8Array}]
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0;
+  const dosTime = 0, dosDate = 0x2821;  // 固定时间戳，输出可复现
+
+  entries.forEach((en) => {
+    const nameB = enc.encode(en.name);
+    const body = en.data;
+    const crc = crc32(body);
+    const lh = new Uint8Array(30 + nameB.length);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true); dv.setUint16(6, 0x0800, true);
+    dv.setUint16(8, 0, true);
+    dv.setUint16(10, dosTime, true); dv.setUint16(12, dosDate, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, body.length, true); dv.setUint32(22, body.length, true);
+    dv.setUint16(26, nameB.length, true); dv.setUint16(28, 0, true);
+    lh.set(nameB, 30);
+    chunks.push(lh, body);
+
+    const ch = new Uint8Array(46 + nameB.length);
+    const dv2 = new DataView(ch.buffer);
+    dv2.setUint32(0, 0x02014b50, true);
+    dv2.setUint16(4, 20, true); dv2.setUint16(6, 20, true);
+    dv2.setUint16(8, 0x0800, true); dv2.setUint16(10, 0, true);
+    dv2.setUint16(12, dosTime, true); dv2.setUint16(14, dosDate, true);
+    dv2.setUint32(16, crc, true);
+    dv2.setUint32(20, body.length, true); dv2.setUint32(24, body.length, true);
+    dv2.setUint16(28, nameB.length, true);
+    dv2.setUint32(42, offset, true);
+    ch.set(nameB, 46);
+    central.push(ch);
+
+    offset += lh.length + body.length;
+  });
+
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const eocd = new Uint8Array(22);
+  const dv3 = new DataView(eocd.buffer);
+  dv3.setUint32(0, 0x06054b50, true);
+  dv3.setUint16(8, entries.length, true); dv3.setUint16(10, entries.length, true);
+  dv3.setUint32(12, cdSize, true); dv3.setUint32(16, offset, true);
+  return new Blob([...chunks, ...central, eocd], { type: "application/zip" });
+}
+
+function fmtBox(b) {
+  return `${b.c} ${b.x.toFixed(6)} ${b.y.toFixed(6)} ${(b.w).toFixed(6)} ${(b.h).toFixed(6)}`;
+}
+
+$("#btnExport").onclick = () => {
+  if (!files.length) { toast("先载入图片"); return; }
+  const enc = new TextEncoder();
+  const entries = [];
+  const skipped = [], empty = [];
+  let totalBoxes = 0, usedImgs = 0;
+  const counter = { 0: 0, 1: 0, 2: 0, 3: 0 };
+
+  files.forEach((f) => {
+    const r = labels[f.name];
+    if (!r) { empty.push(f.name); return; }
+    if (r.skip) { skipped.push(f.name); return; }
+    if (!r.boxes.length) { empty.push(f.name); return; }
+    // 极致去重：完全重合的框只留一个
+    const seen = new Set(), keep = [];
+    r.boxes.forEach((b) => {
+      const s = `${b.c}|${b.x.toFixed(4)}|${b.y.toFixed(4)}|${b.w.toFixed(4)}|${b.h.toFixed(4)}`;
+      if (seen.has(s)) return;
+      seen.add(s); keep.push(b);
+      counter[b.c] = (counter[b.c] || 0) + 1;
+    });
+    totalBoxes += keep.length; usedImgs++;
+    entries.push({ name: "labels/" + stem(f.name) + ".txt",
+                   data: enc.encode(keep.map(fmtBox).join("\n") + "\n") });
+  });
+
+  entries.push({ name: "classes.txt", data: enc.encode(CLASSES.map((c) => c.name).join("\n") + "\n") });
+  entries.push({ name: "_skipped.txt", data: enc.encode(skipped.join("\n") + (skipped.length ? "\n" : "")) });
+  entries.push({ name: "_unlabeled.txt", data: enc.encode(empty.join("\n") + (empty.length ? "\n" : "")) });
+  const rep =
+    "LAB-PPE 网页图/B1 标注导出报告\n" +
+    "生成时间(本地): " + new Date().toLocaleString() + "\n" +
+    "------------------------------------------------\n" +
+    `图片总数        : ${files.length}\n` +
+    `已标注(有框)    : ${usedImgs}\n` +
+    `标为不合格      : ${skipped.length}\n` +
+    `未标注          : ${empty.length}\n` +
+    `框总数          : ${totalBoxes}\n` +
+    `  mask      (0) : ${counter[0] || 0}\n` +
+    `  gloves    (1) : ${counter[1] || 0}\n` +
+    `  lab_coat  (2) : ${counter[2] || 0}\n` +
+    `  goggles   (3) : ${counter[3] || 0}\n` +
+    "------------------------------------------------\n" +
+    "入库前需过四关：红线去重 / pHash 同源 / 脏图筛查 / 标注一致性\n";
+  entries.push({ name: "_export_report.txt", data: enc.encode(rep) });
+
+  const blob = buildZip(entries);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "labppe_labels_" + new Date().toISOString().slice(0, 10) + ".zip";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`已导出 ${usedImgs} 张 / ${totalBoxes} 框`);
+};
+
+$("#btnClearAll").onclick = () => {
+  if (!confirm("清空全部标注（含不合格标记）？图片不会被删除。")) return;
+  labels = {}; selected = -1; persist(); draw(); refreshSide();
+  toast("已清空标注");
+};
+
+/* ============================ 启动 ============================ */
+restore();
+window.addEventListener("resize", draw);
+draw();
+refreshSide();
+</script>
+</body>
+</html>
