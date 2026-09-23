@@ -81,7 +81,9 @@ def resolve_label(img_path: Path) -> Path:
     return img_path.parent.parent.parent / "labels" / img_path.parent.name / stem  # 布局 B
 
 
-def draw(img_path: Path, lbl_path: Path, names: dict, targets: set | None = None):
+def draw(img_path: Path, lbl_path: Path, names: dict, targets: set | None = None,
+         force_color: tuple | None = None):
+    """force_color: BGR 元组；给定时所有框统一用该色（人工复查区分多套拼版用）。"""
     img = imread_u(img_path)
     if img is None:
         return None
@@ -108,7 +110,7 @@ def draw(img_path: Path, lbl_path: Path, names: dict, targets: set | None = None
             show = cls
         l, r = int((xc - bw / 2) * w), int((xc + bw / 2) * w)
         t, b = int((yc - bh / 2) * h), int((yc + bh / 2) * h)
-        c = color_of(show) if show in CLS else color_of(cls)
+        c = force_color if force_color is not None else (color_of(show) if show in CLS else color_of(cls))
         cv2.rectangle(img, (l, t), (r, b), c, 3)
         cv2.putText(img, show, (max(l, 5), max(t - 8, 20)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, c, 2)

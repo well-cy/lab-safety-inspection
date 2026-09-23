@@ -76,6 +76,13 @@ class DSU:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=str(DS),
+                    help="数据集根目录（默认 data/lab_ppe，项目布局 <root>/images/<split>；"
+                         "也支持 raw 布局 <root>/<split>/images）")
+    ap.add_argument("--names", default="",
+                    help="类别名（逗号分隔），默认项目四类 mask,gloves,lab_coat,goggles")
+    ap.add_argument("--exclude", default="",
+                    help="剔除清单（每行 <split>/<文件名>，可带 tab 原因），扫描时跳过")
     ap.add_argument("--class", dest="cls", default="", help="只看含该类框的图（mask/gloves/lab_coat/goggles 或 id）")
     ap.add_argument("--thr", type=int, default=6, help="pHash 汉明距离阈值（越小越严格，默认 6）")
     ap.add_argument("--keep", type=int, default=1, help="每组最多保留几张代表（默认 1）")
@@ -83,27 +90,52 @@ def main() -> int:
     ap.add_argument("--index", default="", help="输出剔除索引（给 remove_bad_images.py）")
     args = ap.parse_args()
 
+    root = Path(args.root)
+    names = [n.strip() for n in args.names.split(",") if n.strip()] or list(NAMES)
+
+    def label_of(sp: str, name: str) -> Path:
+        """兼容两种布局定位标注文件。"""
+        stem = Path(name).stem
+        raw = root / sp / "labels" / (stem + ".txt")
+        if raw.exists():
+            return raw
+        return root / "labels" / sp / (stem + ".txt")
+
     want_cid = None
     if args.cls:
         tok = args.cls.strip().lower()
-        want_cid = int(tok) if tok.isdigit() else NAMES.index(tok)
+        want_cid = int(tok) if tok.isdigit() else names.index(tok)
 
-    items: list[tuple[str, str, Path, list[int]]] = []  # (split, stem, path, class_ids)
+    excluded: set[str] = set()
+    if args.exclude:
+        for ln in Path(args.exclude).read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln and not ln.startswith("#"):
+                excluded.add(ln.split("\t")[0].strip())
+
+    items: list[tuple[str, str, Path, list[int]]] = []  # (split, 文件名, path, class_ids)
     for sp in SPLITS:
-        for ip in sorted((DS / "images" / sp).iterdir()):
-            lp = DS / "labels" / sp / (ip.stem + ".txt")
+        idir = root / "images" / sp
+        if not idir.is_dir():                       # raw 数据集布局
+            idir = root / sp / "images"
+        if not idir.is_dir():
+            continue
+        for ip in sorted(idir.iterdir()):
+            if ip.suffix.lower() not in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+                continue
+            if f"{sp}/{ip.name}" in excluded:
+                continue
+            lp = label_of(sp, ip.name)
             cids: list[int] = []
-            nlines = 0
             if lp.exists():
                 for ln in lp.read_text(encoding="utf-8").splitlines():
                     if ln.strip():
-                        nlines += 1
                         cids.append(int(float(ln.split()[0])))
             if want_cid is not None and want_cid not in cids:
                 continue
-            items.append((sp, ip.stem, ip, cids))
+            items.append((sp, ip.name, ip, cids))
 
-    print(f"[扫描] {len(items)} 张图（{'全部类别' if want_cid is None else NAMES[want_cid]}），计算 pHash…")
+    print(f"[扫描] {len(items)} 张图（{'全部类别' if want_cid is None else names[want_cid]}），计算 pHash…")
     hashes = []
     for i, (sp, stem, ip, cids) in enumerate(items):
         img = imread_unicode(ip)
@@ -159,7 +191,7 @@ def main() -> int:
     # 标注感知二次分桶：pHash 只看画面整体，同机位不同人位的帧也会被并到一组；
     # 检测任务的"真冗余"要求框也基本重合。每组内部再按标注相似度细分。
     def boxes_of(idx: int) -> list[tuple[int, float, float, float, float]]:
-        lp = DS / "labels" / items[idx][0] / (items[idx][1] + ".txt")
+        lp = label_of(items[idx][0], items[idx][1])
         outb = []
         if lp.exists():
             for ln in lp.read_text(encoding="utf-8").splitlines():
@@ -200,7 +232,7 @@ def main() -> int:
 
     final_groups: dict[int, list[int]] = defaultdict(list)
     n_split = 0
-    for root, members in groups.items():
+    for gkey, members in groups.items():
         subs: list[tuple[list, list[int]]] = []
         for i in members:
             bx = boxes_of(i)
@@ -215,7 +247,7 @@ def main() -> int:
         if len(subs) > 1:
             n_split += len(subs) - 1
         for _, sidx in subs:
-            final_groups[root if len(subs) == 1 else id(sidx)] = sidx
+            final_groups[gkey if len(subs) == 1 else id(sidx)] = sidx
     dup_groups = {k: v for k, v in final_groups.items() if len(v) > 1}
 
     n_dup_imgs = sum(len(v) for v in dup_groups.values())
@@ -244,7 +276,7 @@ def main() -> int:
     add("## 重复组明细（每组只列前 6 张）")
     idx_lines: list[str] = []
     n = 0
-    for gi, (root, v) in enumerate(sorted(dup_groups.items(), key=lambda kv: -len(kv[1])), 1):
+    for gi, (gkey, v) in enumerate(sorted(dup_groups.items(), key=lambda kv: -len(kv[1])), 1):
         sps = Counter(items[i][0] for i in v)
         tag = "  <<< 跨split泄漏" if len(sps) > 1 else ""
         add(f"[组{gi}] {len(v)} 张  splits={dict(sps)}{tag}")
@@ -258,7 +290,7 @@ def main() -> int:
         for i in v_sorted[keep_n:]:
             add(f"    剔除: {items[i][0]}/{items[i][1]}  ({len(items[i][3])} 框)")
             n += 1
-            idx_lines.append(f"{n}\t{items[i][0]}/{items[i][1]}.jpg\tdup:phash")
+            idx_lines.append(f"{n}\t{items[i][0]}/{items[i][1]}\tdup:phash")
 
     # 导出前 3 大组的前 40 张（带框拼版验证用）
     top3 = sorted(dup_groups.values(), key=len, reverse=True)[:3]

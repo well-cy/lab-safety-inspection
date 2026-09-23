@@ -198,7 +198,14 @@ def main() -> int:
     ap.add_argument("--one-per-family", action="store_true",
                     help="同一原始照片家族只留 1 张代表（按批次判断时用，人工量降到 1/N）")
     ap.add_argument("--start-index", type=int, default=1, help="编号起始（多批续编时用）")
+    ap.add_argument("--box-color", default="",
+                    help="强制所有框统一颜色（RGB 逗号分隔，如 0,0,255=蓝）；默认按类别配色")
     args = ap.parse_args()
+
+    force_color = None
+    if args.box_color:
+        r, g, b = (int(x) for x in args.box_color.split(","))
+        force_color = (b, g, r)  # 用户给 RGB，OpenCV 用 BGR
 
     root = Path(args.root)
     out = Path(args.out)
@@ -226,7 +233,7 @@ def main() -> int:
             if not ip.exists():
                 skipped.append(str(ip))
                 continue
-            img = draw(ip, lp, names, tg)
+            img = draw(ip, lp, names, tg, force_color=force_color)
             if img is None:
                 skipped.append(str(ip))
                 continue
