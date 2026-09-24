@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import random
 import shutil
 import statistics as st
@@ -103,6 +104,16 @@ def main() -> int:
     src = Path(args.zip)
     img_dir = Path(args.images)
     work = Path(args.work)
+
+    # ---------- 0. 按批次隔离工作目录（不清空、不删除任何文件）----------
+    # work 默认 data/raw/_merge_work，按 ZIP 内容指纹派生子目录，避免跨批次标签混入
+    if str(work) == str(ROOT / "data" / "raw" / "_merge_work"):
+        if src.is_file():
+            fp = (str(src.stat().st_size) + str(src.stat().st_mtime))
+        else:
+            fp = "|".join(sorted(p.name for p in src.glob("labels/*.txt")))
+        tag = hashlib.sha1(fp.encode("utf-8")).hexdigest()[:10]
+        work = work / tag
     raw_labels = work / "labels_raw"
     yolo_labels = work / "labels_yolo"
 
@@ -160,17 +171,33 @@ def main() -> int:
             areas = sorted(b[3] * b[4] for b in sub)
             print(f"  {name:9} n={len(sub):4}  面积中位 {st.median(areas):.3f}")
 
+    have_img = {p.stem for p in img_dir.iterdir() if p.is_file()}
+
+    # 只保留「本批图片目录里真实存在」的标签，防止工作目录残留的其他批次标签混入
+    foreign = sorted(set(per_file) - have_img)
+    if foreign:
+        print(f"[警告] 丢弃 {len(foreign)} 个不属于本批的标签：{', '.join(foreign[:5])}…")
+        for s in foreign:
+            per_file.pop(s, None)
+            (yolo_labels / f"{s}.txt").unlink(missing_ok=True)
+
+    # 用户标为「不合格」的图直接排除，不作为负样本入库
+    skip = set()
+    sk = work / "_skipped.txt"
+    if sk.exists():
+        skip = {l.strip().rsplit(".", 1)[0] for l in sk.read_text(encoding="utf-8").splitlines() if l.strip()}
+    print(f"标为不合格（排除）: {len(skip)} 张")
+
     # ---------- 5. 撞名 ----------
     existing = set()
     for sp in ("train", "valid", "test"):
         existing |= {p.stem for p in (DS / "images" / sp).iterdir()}
-    have_img = {p.stem for p in img_dir.iterdir() if p.is_file()}
     clash = sorted(existing & have_img)
     missing_img = sorted(set(final) - have_img)
     print(f"撞名 {len(clash)} 张{': ' + ', '.join(clash[:5]) if clash else ''}")
     print(f"有标签无图 {len(missing_img)} 张{': ' + ', '.join(missing_img[:5]) if missing_img else ''}")
 
-    pool = sorted((have_img - existing) - (set(final) - have_img))
+    pool = sorted((have_img - existing - skip) - (set(final) - have_img))
     labeled = [s for s in pool if final.get(s)]
     neg = [s for s in pool if not final.get(s)]
     print(f"待入库 {len(pool)} 张：有框 {len(labeled)}  负样本 {len(neg)}")
