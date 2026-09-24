@@ -29,6 +29,7 @@ import csv
 import json
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -41,6 +42,7 @@ MANIFEST = OUT_DIR.parent / "manifest.csv"
 
 API = "https://commons.wikimedia.org/w/api.php"
 UA = "lab-ppe-dataset-research/1.0 (course project; contact: local)"
+_tls = threading.local()
 
 MIN_W = 800
 MIN_H = 600
@@ -141,6 +143,16 @@ THUMB_PX = 1920
 
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
+
+
+def _session() -> requests.Session:
+    """每个线程一个 Session（requests.Session 非线程安全）。"""
+    global SESS
+    if not hasattr(_tls, "sess"):
+        s = requests.Session()
+        s.headers.update({"User-Agent": UA})
+        _tls.sess = s
+    return _tls.sess
 
 # Commons 对匿名调用限流较紧（连续请求会 429），统一节流 + 指数退避
 MIN_API_GAP = 2.5          # 相邻 API 调用最小间隔（秒）
@@ -285,14 +297,17 @@ def append_manifest(rows: list[dict]) -> None:
 
 def download(item: dict, idx: int, out_dir: Path) -> dict | None:
     ext = ".jpg" if item["mime"] == "image/jpeg" else ".png"
-    name = f"web_{idx:04d}{ext}"
+    # 文件名用 Commons pageid（稳定唯一），不用清单位置——
+    # 位置编号会随候选清单顺序变化而串号（2026-09-24 踩过：换清单后
+    # dst.exists() 把新候选误判为已下载，整批跳过并写入错误元数据）
+    name = f"web_p{item['pageid']}{ext}"
     dst = out_dir / name
     if dst.exists() and dst.stat().st_size > 4096:
         return {**item, "name": name}
     last_err = None
     for attempt in range(3):
         try:
-            with SESS.get(item["url"], stream=True, timeout=90) as r:
+            with _session().get(item["url"], stream=True, timeout=90) as r:
                 if r.status_code == 429:
                     raise requests.HTTPError("429", response=r)
                 r.raise_for_status()
@@ -326,7 +341,10 @@ def main() -> int:
     ap.add_argument("--pages", type=int, default=1, help="每组检索式翻几页")
     ap.add_argument("--only", choices=["all", "search", "cat"], default="all")
     ap.add_argument("--page", type=int, default=0, help="只跑检索式第 N 页（配合 --only search）")
-    ap.add_argument("--sleep", type=float, default=0.5, help="下载间隔秒")
+    ap.add_argument("--sleep", type=float, default=0.5, help="下载间隔秒（workers=1 时生效）")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="并发下载线程数（>1 走线程池；Commons 缩略图 CDN 对并发较宽容，"
+                         "单线程实测 ~9s/张过慢，建议 6）")
     ap.add_argument("--collect-only", action="store_true",
                     help="只枚举并写出 candidates.json，不下载（枚举受 Commons API 限流，慢）")
     ap.add_argument("--from-json", default="",
@@ -383,24 +401,54 @@ def main() -> int:
         print(f"  ... 共 {len(cands)} 张（--collect-only 未下载）")
         return 0
 
+    # 跳过已抓取项：按 Commons pageid 判定（与文件名/清单顺序解耦）
+    have_ids = {str(r.get("pageid", "")).strip()
+                for r in have.values() if str(r.get("pageid", "")).strip()}
+    n_before = len(cands)
+    cands = [c for c in cands if str(c.get("pageid", "")).strip() not in have_ids]
+    print(f"[去重] 跳过已抓取 {n_before - len(cands)} 张，待抓 {len(cands)} 张")
+
     cands = cands[: args.limit]
     print(f"本次下载配额: {len(cands)}")
 
     # ---------- 2. 下载 ----------
-    # 编号取候选在清单里的位置（而非已下载数），保证断点续跑文件名稳定不撞车
+    # 文件名由 pageid 决定（唯一稳定），与清单位置无关 -> 并发/断点续跑都安全
     done, failed = [], 0
-    for i, item in enumerate(cands, start=1):
-        rec = download(item, i, out_dir)
-        if rec is None:
-            failed += 1
-            continue
-        done.append(rec)
-        if len(done) % 25 == 0:
-            append_manifest(done[-25:])
-        time.sleep(args.sleep)
-    rest = len(done) % 25
-    if rest:
-        append_manifest(done[-rest:])
+    batch: list[dict] = []
+
+    def flush(force: bool = False) -> None:
+        nonlocal batch
+        if len(batch) >= 25 or (force and batch):
+            append_manifest(batch)
+            batch = []
+
+    if args.workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        print(f"并发下载 workers={args.workers}")
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(download, item, i, out_dir): item
+                    for i, item in enumerate(cands, start=1)}
+            for n, fut in enumerate(as_completed(futs), start=1):
+                rec = fut.result()
+                if rec is None:
+                    failed += 1
+                else:
+                    done.append(rec)
+                    batch.append(rec)
+                    flush()
+                if n % 50 == 0:
+                    print(f"  ... 进度 {n}/{len(cands)}  成功 {len(done)} 失败 {failed}", flush=True)
+    else:
+        for i, item in enumerate(cands, start=1):
+            rec = download(item, i, out_dir)
+            if rec is None:
+                failed += 1
+                continue
+            done.append(rec)
+            batch.append(rec)
+            flush()
+            time.sleep(args.sleep)
+    flush(force=True)
 
     print("\n" + "=" * 60)
     print(f"下载成功 {len(done)} / 失败 {failed}")
