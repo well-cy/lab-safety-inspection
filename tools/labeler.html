@@ -576,7 +576,8 @@ function buildZip(entries) {          // entries: [{name, data:Uint8Array}]
 }
 
 function fmtBox(b) {
-  return `${b.c} ${b.x.toFixed(6)} ${b.y.toFixed(6)} ${(b.w).toFixed(6)} ${(b.h).toFixed(6)}`;
+  // 内部存储为左上角+宽高；YOLO 要求中心点+宽高
+  return `${b.c} ${(b.x + b.w / 2).toFixed(6)} ${(b.y + b.h / 2).toFixed(6)} ${(b.w).toFixed(6)} ${(b.h).toFixed(6)}`;
 }
 
 $("#btnExport").onclick = () => {

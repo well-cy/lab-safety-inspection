@@ -94,15 +94,23 @@ python tools/fetch_web_images.py --from-json data/raw/web_lab/candidates.json
   本地没有 `*.pt` 导致"模型预标注"这条最快路走不通，人工从零画框是 B1
   卡了两周的隐性原因；有了这个工具，人工标注 1-3 框/张的图约 10 秒/张。
 
-## 6. 入库（标注完成后，另行执行）
+## 6. 入库（✅ 2026-09-24 已完成）
 
-1. ZIP 解压 → labels 与 images 按 stem 对齐，放入 `data/raw/web_lab/{images,labels}`
-2. 四关全过（§3）→ `tools/merge_glove_datasets.py` 的映射思路改写为 web 版合并脚本
-   （前缀 `web_`，437 张 labcoat_si 同款做法）
-3. **新增数据不进 test**（dataset1 test 保持纯净），按 90/10 进 train/valid
-4. E4 训练启动条件不变：B1 到位；本线数据作为**并行增量**，不替代 B1
-5. 若 B1 继续不到位：本线数据 + labcoat_si（已入库）构成 labcoat_si-only
-   降级预案的数据基础，先让 E4 跑起来
+1. ZIP 解包 → CRC 全通过；96 张有框 / 16 张未标 / 0 张不合格
+2. **发现并修复标注器导出口径 bug**：`fmtBox` 把框写成了「左上角+宽高」，
+   而 YOLO 要求「中心点+宽高」——249 框经确定性反推（中心=左上+宽高/2）全部修复
+   （`labels/` 为原始导出，`labels_yolo/` 为修正版；81 个越界框裁剪到图像边界，0 框剔除）。
+   `tools/labeler.html` 已修，B1 标注不受影响。复核拼版确认框全部对齐目标。
+3. 16 张未标注逐张核验：全部为无人/无 PPE 场景（空台面/仪器/便装人员），作背景负样本合法
+4. 四关审计：红线去重 0 命中（`data/web_lab_keep_dedup_report.txt`）；
+   内部 pHash 0 组（`data/web_keep_internal_phash_report.txt`）；
+   脏图筛查在粗筛已过；标注一致性经渲染复核通过
+5. **入库**：112 张（96 有框 + 16 负样本）按 90/10 进 train(100)/valid(12)，**不进 test**；
+   随机种子 42；顺带清除 1 个历史遗留空标签孤儿
+   （`labels/valid/ppes_frame558_*.txt`，0B 无图）
+
+**入库后全库：13410 张 / 20966 框（mask 1807 / gloves 10562 / lab_coat 2078 / goggles 6519）**
+图文配对全库一致。E4 训练启动条件不变：B1 到位；本线数据为并行增量。
 
 ## 7. 边界与不做的事
 
