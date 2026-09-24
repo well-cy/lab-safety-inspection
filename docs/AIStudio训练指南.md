@@ -8,13 +8,18 @@
 
 ## 第 0 步：准备（已替你做好）
 
-- 上传包（单文件 zip，约 1.5GB）：
-  `D:\ZuoYe\lab-safety-inspection\outputs\kaggle_upload\lab_ppe_kaggle.zip`
-  内含 `lab_ppe_kaggle/`（13507 图 + 13507 标签 + data.yaml）
+- **数据集已上传完毕**（2026-09-24，命令行直传，1.5GB 完整）：
+  - 数据集名称：`lab-ppe-kaggle`
+  - 数据集 ID：**400147**
+  - 链接：https://aistudio.baidu.com/dataset/detail/400147/intro
+  - 内含：`lab_ppe_kaggle.zip`（1553.4 MB，13507 图 + 13507 标签 + data.yaml）
+- **所以你不用再上传了**，直接从第 3 步「建 Notebook 项目」开始，在启动环境时勾选这个数据集即可。
+
+> 网页端拖拽 1.5GB 会卡死，已改为命令行直传完成。工具：`tools/aistudio_upload.py`
 
 ---
 
-## 第 1 步：注册 / 登录
+## 第 1 步：注册 / 登录（若还没账号）
 
 1. 打开 https://aistudio.baidu.com
 2. 用**百度账号**登录（没有就注册，手机号即可，无需 VPN）
@@ -24,11 +29,12 @@
 
 ---
 
-## 第 2 步：上传数据集
+## 第 2 步：确认数据集（已代传，跳过上传）
 
-1. 顶部菜单 → **数据集** → **创建数据集**
-2. 名称填 `lab-ppe`，把 `lab_ppe_kaggle.zip` 拖进去上传（1.5GB，视网速 10–40 分钟）
-3. 可见性：**公开**（省去私有数据集授权），描述随便写，创建即可
+数据集 **400147** 已上传完成，**这一步你不用做任何事**。
+
+如果你想自己核对，打开 https://aistudio.baidu.com/dataset/detail/400147/intro
+应该能看到 `lab_ppe_kaggle.zip`（1553.4 MB）。
 
 ---
 
@@ -39,7 +45,7 @@
    - **AIStudio Classic → Notebook**（选「免费版」即可）
    - **运行环境基础镜像**：选 Python 3.10 / 带CUDA 的镜像（如 `PaddlePaddle 2.6 + Python 3.10`）
    - **算力卡**：选 **V100 32G**
-   - **数据集**：挂载刚才创建的 `lab-ppe`
+   - **数据集**：勾选 `lab-ppe-kaggle`（ID 400147）
 3. 启动后进入 Notebook，**先顶栏保存一份副本**（默认环境是只读的，会提示「保存个人副本」，点确认）
 
 ---
