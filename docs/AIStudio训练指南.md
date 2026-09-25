@@ -1,230 +1,64 @@
-# Lab-PPE YOLOv8s 训练（百度 AI Studio 版，国内直连）
+# Lab-PPE YOLOv8s 训练（AI Studio · PyTorch 框架版）
 
-**适用**：Kaggle 注册被 Google reCAPTCHA 挡住的场景。AI Studio 国内直连、中文、百度账号即可。
-
-**总流程**：注册 → 上传数据集 zip → 建 Notebook 项目（挂 GPU + 挂数据集）→ 逐 Cell 粘贴运行 → 下载 `labppe_weights.zip` 发回。
-
----
-
-## 第 0 步：准备（已替你做好）
-
-- **数据集已上传完毕**（2026-09-24，命令行直传，1.5GB 完整）：
-  - 数据集名称：`lab-ppe-kaggle`
-  - 数据集 ID：**400147**
-  - 链接：https://aistudio.baidu.com/dataset/detail/400147/intro
-  - 内含：`lab_ppe_kaggle.zip`（1553.4 MB，13507 图 + 13507 标签 + data.yaml）
-- **所以你不用再上传了**，直接从第 3 步「建 Notebook 项目」开始，在启动环境时勾选这个数据集即可。
-
-> 网页端拖拽 1.5GB 会卡死，已改为命令行直传完成。工具：`tools/aistudio_upload.py`
+> **更新 2026-09-25**：旧版「PaddlePaddle 镜像 + 手动装 torch」方案**作废**——AI Studio 在 PaddlePaddle 镜像里于 import 层锁死 torch（`Cannot run import torch because of system compatibility`），pip/wheel 改名下载等绕法全部无效。
+> **唯一正路：创建 Notebook 时项目框架选 PyTorch。**
 
 ---
 
-## 第 1 步：注册 / 登录（若还没账号）
+## 三个必知（全是踩过的坑）
 
-1. 打开 https://aistudio.baidu.com
-2. 用**百度账号**登录（没有就注册，手机号即可，无需 VPN）
-3. 右上角头像 → **算力点**：新用户自带赠送点数；**每天签到也送**（免费额度足够训 3–4 小时 V100）
-
-> 训练用 V100 32G 约 1 点/小时级别，50 epochs 总计约 3–4 点，免费额度完全够。
-
----
-
-## 第 2 步：确认数据集（已代传，跳过上传）
-
-数据集 **400147** 已上传完成，**这一步你不用做任何事**。
-
-如果你想自己核对，打开 https://aistudio.baidu.com/dataset/detail/400147/intro
-应该能看到 `lab_ppe_kaggle.zip`（1553.4 MB）。
+| # | 坑 | 正确做法 |
+|---|---|---|
+| ① | PaddlePaddle 镜像在 import 层锁死 torch | 创建 Notebook 时**框架选 PyTorch** |
+| ② | 显卡默认选中 **BI-V150S**（天数智芯国产卡，torch CUDA 用不了） | 手动改选 **V100 16GB**（2 点/小时） |
+| ③ | pip 装 2GB 级大包几分钟无输出，像死机 | 一键格已带实时滚动输出；看到 `$ pip install ...` 就耐心等 |
 
 ---
 
-## 第 3 步：建 Notebook 项目
+## 第 0 步：数据集（已代传，跳过）
 
-1. 顶部菜单 → **项目** → **创建项目**（名称随意，如 `labppe-train`）
-2. 进入项目 → **启动环境**：
-   - **AIStudio Classic → Notebook**（选「免费版」即可）
-   - **运行环境基础镜像**：选 Python 3.10 / 带CUDA 的镜像（如 `PaddlePaddle 2.6 + Python 3.10`）
-   - **算力卡**：选 **V100 32G**
-   - **数据集**：勾选 `lab-ppe-kaggle`（ID 400147）
-3. 启动后进入 Notebook，**先顶栏保存一份副本**（默认环境是只读的，会提示「保存个人副本」，点确认）
+- 数据集 `lab-ppe-kaggle`，ID **400147**：https://aistudio.baidu.com/dataset/detail/400147/intro
+- 内含 `lab_ppe_kaggle.zip`（1553.4 MB：13507 图 + 13507 标签 + data.yaml；train/valid/test 俱全，mask/gloves/lab_coat/goggles 四类）
+- 命令行直传工具：`tools/aistudio_upload.py`（网页拖 1.5GB 会卡死）
 
 ---
 
-## Cell 1 — 安装依赖 + 定位数据集
+## 第 1 步：停掉旧环境（省点数）
 
-```python
-# 国内有镜像，直连即可
-!pip install -q ultralytics -i https://pypi.tuna.tsinghua.edu.cn/simple
-
-import zipfile, glob
-from pathlib import Path
-
-# 找到挂载的数据集里的 zip 并解压到工作目录
-zips = glob.glob("/home/aistudio/data/**/lab_ppe_kaggle.zip", recursive=True)
-assert zips, "没找到 lab_ppe_kaggle.zip —— 检查数据集是否挂载"
-print("找到:", zips[0])
-
-WORK = Path("/home/aistudio/work")
-if not (WORK / "lab_ppe_kaggle" / "data.yaml").exists():
-    !unzip -q -o {zips[0]} -d {WORK}
-DATA = WORK / "lab_ppe_kaggle"
-print("数据集:", DATA)
-
-for sp in ("train", "valid", "test"):
-    n = len(list((DATA / "images" / sp).glob("*")))
-    l = len(list((DATA / "labels" / sp).glob("*.txt")))
-    print(f"{sp:<6} 图片 {n:>6}  标签 {l:>6}")
-```
+个人头像 → 算力点/项目 → 找到旧的 `labppe`（PaddlePaddle 那个）**运行中环境 → 停止**。
 
 ---
 
-## Cell 2 — 重写 data.yaml 路径（关键，不能跳）
+## 第 2 步：创建 Notebook（框架必须选 PyTorch）
 
-```python
-import yaml
+按 `outputs/创建notebook指引.png` 打开「创建Notebook」弹窗，共改 4 处：
 
-cfg = yaml.safe_load((DATA / "data.yaml").read_text())
-cfg["path"] = str(DATA)          # 指向 AI Studio 实际解压目录
-yaml.safe_dump(cfg, open(DATA / "data.yaml", "w", encoding="utf-8"),
-               allow_unicode=True, sort_keys=False)
-print((DATA / "data.yaml").read_text())
-```
+1. **项目名称**：`labppe-pt`（与旧的区分）
+2. **项目框架：选 PyTorch** ← 关键新增步骤。选项一般在弹窗内或展开「高级配置」后的「框架 / 基础镜像」一栏；**如果展开后找不到，截图发我**
+3. **数据集配置**：添加数据集 → 搜索勾选 `lab-ppe-kaggle`
+4. **高级配置 → 显卡：V100 16GB**
+   - IDE 保持 JupyterLab，其余不动 → 点「创建」
 
 ---
 
-## Cell 3 — 下载预训练权重（走 hf-mirror，国内可连）
+## 第 3 步：跑一键格
 
-```python
-# AI Studio 的服务器访问 github 不稳定，用 hf-mirror 下载官方 yolov8s.pt
-import subprocess
-from pathlib import Path
+1. 打开 `outputs/AIStudio_PyTorch_照着抄.txt`
+2. 把**格 1（主一键格）整段**复制进一个 Cell → Shift+Enter
+3. 预计 **2~3 小时**（50 epochs，V100 16GB，batch 16；32GB 卡可改 batch=32），全程实时输出
+4. 中断/断线/点数用完都不怕：**重跑同一格**，自动跳过已完成步骤或从 last.pt 续训
 
-PT = Path("/home/aistudio/work/yolov8s.pt")
-if not PT.exists():
-    r = subprocess.run(
-        ["curl", "-sL", "-o", str(PT),
-         "https://hf-mirror.com/Ultralytics/YOLOv8/resolve/main/yolov8s.pt"],
-        capture_output=True, text=True)
-    print("curl:", r.returncode)
-print("大小 MB:", PT.stat().st_size / 1048576 if PT.exists() else "下载失败")
-assert PT.exists() and PT.stat().st_size > 1e6
-```
+txt 里还有：
+
+- **格 2 · 备用 CUDA 修复格**：仅当报 `NVIDIA driver is too old (found version 12000)` 时跑；跑完 Kernel → Restart Kernel，再重跑格 1
+- **格 3 · 效果预览格（可选）**：训完出 24 张验证图检测拼版 `valid_preview.jpg`
 
 ---
 
-## Cell 4 — 训练（50 epochs，V100 约 2–4 小时）
+## 训完之后
 
-```python
-from ultralytics import YOLO
-import torch, time
-
-print("GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "无! 请检查算力卡选择")
-
-t0 = time.time()
-model = YOLO(str(PT))            # 用 Cell 3 下载的本地权重
-results = model.train(
-    data=str(DATA / "data.yaml"),
-    epochs=50,
-    imgsz=640,
-    batch=32,                    # V100 32G 可到 32；若报显存不足降到 16
-    device=0,
-    workers=8,
-    project="/home/aistudio/work/runs",
-    name="labppe_v8s",
-    exist_ok=True,
-    seed=42,
-    verbose=True,
-    plots=True,
-)
-print(f"\n训练耗时 {(time.time()-t0)/60:.1f} 分钟")
-print("save_dir:", results.save_dir)
-```
-
----
-
-## Cell 5 — 验证集评估 + lab_coat 专项
-
-```python
-from ultralytics import YOLO
-from pathlib import Path
-
-BEST = Path(results.save_dir) / "weights" / "best.pt"
-print("best.pt:", BEST, round(BEST.stat().st_size / 1048576, 1), "MB")
-
-m = YOLO(str(BEST))
-val = m.val(data=str(DATA / "data.yaml"), split="val", imgsz=640, device=0)
-
-print(f"\nmAP50    = {val.box.map50:.4f}")
-print(f"mAP50-95 = {val.box.map:.4f}")
-for i, name in m.names.items():
-    try:
-        print(f"  {name:<10} AP50 = {val.box.ap50[i]:.4f}")
-    except Exception:
-        pass
-
-i = list(m.names.values()).index("lab_coat")
-print(f"\n[关键] lab_coat AP50 = {val.box.ap50[i]:.4f}")
-print("对照：E3 基线在 dataset2 external 上 lab_coat F1 = 0.34（跨域）")
-```
-
----
-
-## Cell 6 — 打包下载（训完立刻跑！）
-
-```python
-import shutil
-from pathlib import Path
-
-out = Path("/home/aistudio/work/export")
-out.mkdir(exist_ok=True)
-shutil.copy2(BEST, out / "best.pt")
-shutil.copy2(Path(results.save_dir) / "weights" / "last.pt", out / "last.pt")
-for f in ("results.csv", "results.png", "confusion_matrix.png",
-          "confusion_matrix_normalized.png", "BoxF1_curve.png", "BoxPR_curve.png"):
-    p = Path(results.save_dir) / f
-    if p.exists():
-        shutil.copy2(p, out / f)
-
-shutil.make_archive("/home/aistudio/work/labppe_weights", "zip", out)
-print("已打包: /home/aistudio/work/labppe_weights.zip")
-```
-
-**下载方法**：Notebook 左侧文件树 → 找到 `/home/aistudio/work/labppe_weights.zip` → 右键 **下载**。
-（环境关停后文件会保留一段时间，但**一定训完就下**，最稳。）
-
----
-
-## Cell 7 — 效果预览（可选）
-
-```python
-import cv2, numpy as np
-from pathlib import Path
-
-m2 = YOLO(str(BEST))
-CLR = {0:(255,150,40), 1:(0,150,255), 2:(90,220,60), 3:(200,60,220)}
-NAMES = ["mask","gloves","lab_coat","goggles"]
-
-imgs = sorted((DATA/"images"/"valid").glob("*"))[:24]
-tiles = []
-for p in imgs:
-    r = m2.predict(str(p), conf=0.35, imgsz=640, device=0, verbose=False)[0]
-    img = cv2.imread(str(p)); h, w = img.shape[:2]
-    if r.boxes is not None:
-        for b in r.boxes:
-            c = int(b.cls.item()); cf = float(b.conf.item())
-            x1,y1,x2,y2 = [int(v) for v in b.xyxy[0]]
-            cv2.rectangle(img,(x1,y1),(x2,y2),CLR.get(c,(0,0,255)),max(2,w//300))
-            cv2.putText(img,f"{NAMES[c]} {cf:.2f}",(x1+3,max(14,y1-6)),
-                        cv2.FONT_HERSHEY_SIMPLEX,max(0.5,w/1400),CLR.get(c,(0,0,255)),2)
-    tw=320; tiles.append(cv2.resize(img,(tw,int(h*tw/w))))
-
-cols=4; H=max(t.shape[0] for t in tiles)
-canvas=np.full(((len(tiles)+cols-1)//cols*(H+8), cols*324,3),24,np.uint8)
-for k,t in enumerate(tiles):
-    rr,cc=divmod(k,cols); canvas[rr*(H+8):rr*(H+8)+t.shape[0], cc*324:cc*324+t.shape[1]]=t
-cv2.imwrite("/home/aistudio/work/valid_preview.jpg", canvas)
-print("已输出 /home/aistudio/work/valid_preview.jpg（左树右键下载）")
-```
+- 左侧文件树 → `/home/aistudio/work/labppe_weights.zip` → 右键**下载**（best.pt / last.pt / results.csv / 混淆矩阵 / PR 曲线）
+- 把 zip 发给 AI → 本地跑 `infer_check.py` 出 external_test 效果拼版，对比 E3 基线（lab_coat external F1 = 0.34）
 
 ---
 
@@ -232,14 +66,18 @@ print("已输出 /home/aistudio/work/valid_preview.jpg（左树右键下载）")
 
 | 症状 | 处理 |
 |---|---|
-| 启动时选不到 V100 | 换时段（高峰可能排队），或先选「免费单卡 16G」也能训，batch 降到 16 |
-| 训练中断（点数不足/超时） | 环境里 `last.pt` 还在，把 Cell 4 的起点改为 `YOLO('/home/aistudio/work/runs/labppe_v8s/weights/last.pt')` 并把 epochs 顺延（resume 逻辑：`model.train(resume=True)`） |
-| pip 装不上 | 换镜像 `-i https://mirrors.aliyun.com/pypi/simple/` |
-| 数据集没挂载 | 项目启动页「数据集」一栏勾选 `lab-ppe` 后重新启动环境 |
-| 环境是只读 | 首次进入点「保存个人副本」再运行 |
-| 显存不足 | `batch=32 → 16 → 8` |
+| `import torch` 报 system compatibility | 创建时框架选成 PaddlePaddle 了 → 停环境重建，框架选 **PyTorch** |
+| CUDA 不可用（格 1 assert 报错） | 显卡选错 → 必须 **V100 16GB**，不能用 BI-V150S |
+| `NVIDIA driver is too old (found version 12000)` | 跑 txt 里的格 2 修 CUDA → 重启内核 → 重跑格 1 |
+| 训练中断（点数不足/断线） | 重跑格 1，自动续训 |
+| 没找到 lab_ppe_kaggle.zip | 创建时没挂数据集 → 停环境后编辑配置，勾上 `lab-ppe-kaggle` |
+| 显存不足 OOM | batch 16 → 8 |
+| 创建弹窗里找不到框架选项 | 展开「高级配置」找「框架/基础镜像」；还没有就截图发我 |
+
+---
 
 ## 红线提醒
 
-- test 集（732 张）在包里**仅供训完自查**，禁止参与训练/调参（项目 external_test 红线）
+- 包内 test 集（732 张，源自 dataset2 external_test）**仅供训完自查，禁止参与训练/调参/模型挑选**
 - data.yaml 的 `val` 已指向 `images/valid`，训练不会碰 test
+- 新增数据只进 train/valid，不进 test（E4 规划）
