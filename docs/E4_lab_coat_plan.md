@@ -103,6 +103,19 @@
 
 **E4 训练启动条件**：B1 到位 → 标注 → 对 dataset1/dataset2 去重（复用 `tools/dedup_new_dataset.py`）→ 并入 train → 按方案Ⅰ/Ⅱ开训。
 
+### B+2. Coverall 口径变更与补框（2026-09-28，负责人：许婧雯）
+
+E2 模型实测对连体防护服零识别（conf 降到 0.05 仍无输出）。当日用户拍板：**Coverall 并入 lab_coat**（此前为防语义混淆特意剔除，现按真实使用口径放宽）。数据源：`data/raw/ppedetect`（saba/ppedetection v7，CC BY 4.0）train 364 张，其中 329 张含 Coverall 标注。执行（`tools/merge_coverall.py`，报告 `data/coverall_merge_report.txt`）：
+
+| 处理 | 数量 | 说明 |
+|---|---|---|
+| MD5 同图（早年手套合并已入库） | 300 | 逐框比对确认与 ppedetect 同一套标注，但**缺 Coverall 框**（教模型"穿防护服=没穿"，必须补） |
+| └ 其中在 train，补 lab_coat 框 | 279 张 / +331 框 | 逐行精确比对幂等追加；改前原文件备份至 `data/_label_backup_coverall_2026-09-28/` |
+| └ 其中在 valid/test | 21 | **一律不碰**（口径可比 + external_test 红线） |
+| 全新图片并入 train | 29（`cov_` 前缀） | 映射 Coverall→lab_coat、Gloves→gloves、Goggles→goggles、Mask→mask，Face_Shield 14 框丢弃 |
+
+**合并后 `data/lab_ppe/train`：图片 10812→10841；四类框 mask 1630 / gloves 9331 / lab_coat 2380 / goggles 5199**（lab_coat 净增 366，均为防护服形态）。manifest.csv 已追加 keep/patch/drop 全部记录。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：
