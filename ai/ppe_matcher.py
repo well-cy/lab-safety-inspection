@@ -23,6 +23,7 @@ class PersonState:
     ppe: dict = field(default_factory=dict)   # {ppe_type: Detection}
     in_roi: bool = False                # 是否在实验操作区（由外部 ROI 模块填写）
     area_name: str = ""                 # 所在区域名称
+    virtual: bool = False               # True=无 person 模型时的虚拟聚合人员
 
     @property
     def has_ppe(self) -> dict:
@@ -57,6 +58,16 @@ def match_person_ppe(detections: list[Detection],
     ppes = [d for d in detections if d.cls_name != "person"]
 
     states = [PersonState(person_id=i + 1, bbox=p) for i, p in enumerate(persons)]
+
+    # 4 类自制模型（E2/E4）不输出 person：把全部 PPE 聚合到一个虚拟人员，
+    # bbox 取所有 PPE 的外包络，保证规则引擎 / 标注 / 统计链路照常工作
+    if not persons and ppes:
+        virt = Detection(
+            cls_name="person", raw_cls="virtual-person", conf=1.0,
+            x1=min(d.x1 for d in ppes), y1=min(d.y1 for d in ppes),
+            x2=max(d.x2 for d in ppes), y2=max(d.y2 for d in ppes),
+        )
+        states = [PersonState(person_id=1, bbox=virt, virtual=True)]
 
     for ppe in ppes:
         px, py = ppe.center

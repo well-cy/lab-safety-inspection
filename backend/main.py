@@ -46,7 +46,10 @@ def get_pipeline():
     if _pipeline is None:
         from ai.detector import PPEDetector
         from video.processor import InspectionPipeline
-        _detector = PPEDetector(ROOT / "ai" / "model" / "sh17_yolov8s.pt")
+        # 模型选择：优先加载自制 4 类模型（labppe_v8s.pt），没有则回退 SH17 官方权重
+        _custom = ROOT / "ai" / "model" / "labppe_v8s.pt"
+        _fallback = ROOT / "ai" / "model" / "sh17_yolov8s.pt"
+        _detector = PPEDetector(_custom if _custom.exists() else _fallback)
         from rule_engine.engine import SafetyRuleEngine
         _pipeline = InspectionPipeline(
             detector=_detector, engine=SafetyRuleEngine())
@@ -75,7 +78,9 @@ def model_info():
     det = p.detector
     return {
         "model_file": Path(det.weights_path).name,
-        "base": "SH17 dataset (official YOLOv8s weights, ultralytics)",
+        "base": ("Lab-PPE 4类自制模型 (E4 dataset, ultralytics)"
+                 if Path(det.weights_path).name == "labppe_v8s.pt"
+                 else "SH17 dataset (official YOLOv8s weights, ultralytics)"),
         "device": det.device_name,
         "conf_threshold": det.conf_threshold,
         "raw_classes": det.raw_names,

@@ -49,8 +49,10 @@ def draw_annotations(frame, person_states, events, areas):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_ROI, 1)
 
     event_map = {e.person_id: e for e in events}
-    # person 框
+    # person 框（虚拟聚合人员不画外框，只画其 PPE 框）
     for st in person_states:
+        if getattr(st, "virtual", False):
+            continue
         ev = event_map.get(st.person_id)
         if ev is None:
             color, tag = COLOR_OK, "OK"

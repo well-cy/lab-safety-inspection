@@ -1,7 +1,9 @@
-# Lab-PPE YOLOv8s 训练（AI Studio · PyTorch 框架版）
+# Lab-PPE YOLOv8s 训练（AI Studio · 经典版 + 手动装 torch）
 
-> **更新 2026-09-25**：旧版「PaddlePaddle 镜像 + 手动装 torch」方案**作废**——AI Studio 在 PaddlePaddle 镜像里于 import 层锁死 torch（`Cannot run import torch because of system compatibility`），pip/wheel 改名下载等绕法全部无效。
-> **唯一正路：创建 Notebook 时项目框架选 PyTorch。**
+> **更新 2026-09-25（终版路线）**：实测新版 BML CodeLab 的镜像**写死 PaddlePaddle 3.3.0**——
+> 创建弹窗、切换环境弹窗（只有 CPU/异构/BI-V150S/V100 16GB 算力卡）都**没有框架选项**，
+> 且 `import torch` 被 import 层锁死（`Cannot run import torch because of system compatibility`）。
+> **唯一免费正路 = AI Studio 经典版项目**（无 import 锁，手动装 cu118 torch，近期实测文章证实可行）。
 
 ---
 
@@ -9,8 +11,8 @@
 
 | # | 坑 | 正确做法 |
 |---|---|---|
-| ① | PaddlePaddle 镜像在 import 层锁死 torch | 创建 Notebook 时**框架选 PyTorch** |
-| ② | 显卡默认选中 **BI-V150S**（天数智芯国产卡，torch CUDA 用不了） | 手动改选 **V100 16GB**（2 点/小时） |
+| ① | BML CodeLab（新版）锁死 torch 且无法换框架 | **创建经典版项目**，手动装 cu118 torch |
+| ② | 显卡默认 CPU / BI-V150S（国产卡，torch 用不了） | 启动/切换时选 **V100 16GB**（2 点/小时） |
 | ③ | pip 装 2GB 级大包几分钟无输出，像死机 | 一键格已带实时滚动输出；看到 `$ pip install ...` 就耐心等 |
 
 ---
@@ -20,38 +22,37 @@
 - 数据集 `lab-ppe-kaggle`，ID **400147**：https://aistudio.baidu.com/dataset/detail/400147/intro
 - 内含 `lab_ppe_kaggle.zip`（1553.4 MB：13507 图 + 13507 标签 + data.yaml；train/valid/test 俱全，mask/gloves/lab_coat/goggles 四类）
 - 命令行直传工具：`tools/aistudio_upload.py`（网页拖 1.5GB 会卡死）
+- 创建经典版项目时在「数据集」一栏挂上它；挂载路径固定在 `/home/aistudio/data/data400147/`
 
 ---
 
 ## 第 1 步：停掉旧环境（省点数）
 
-个人头像 → 算力点/项目 → 找到旧的 `labppe`（PaddlePaddle 那个）**运行中环境 → 停止**。
+两个旧项目（`labppe`、`labppe-pt`）都是 BML CodeLab，**都用不了，别再纠缠**：
+项目详情页 → **停止环境**（V100 挂着每小时烧 2~3 点）。
 
 ---
 
-## 第 2 步：创建 Notebook（框架必须选 PyTorch）
+## 第 2 步：创建「AI Studio 经典版」项目（关键步骤）
 
-按 `outputs/创建notebook指引.png` 打开「创建Notebook」弹窗，共改 4 处：
+1. AI Studio 首页 → **项目大厅 → 创建项目** → 类型选 **Notebook**
+2. **Notebook 版本选「AI Studio 经典版」**（与 BML Codelab 并列的选项）
+3. **框架版本：选最新的 PaddlePaddle（2.6+，对应 Python 3.10）**——选它没关系，经典版没有 import 锁，一键格会手动装 torch
+4. 数据集：挂 `lab-ppe-kaggle`；名称 `labppe-classic`
+5. 创建 → 详情页点「**启动环境**」→ 算力卡选 **V100 16GB** → 启动
 
-1. **项目名称**：`labppe-pt`（与旧的区分）
-2. **项目框架：选 PyTorch** ← 关键新增步骤。选项一般在弹窗内或展开「高级配置」后的「框架 / 基础镜像」一栏；**如果展开后找不到，截图发我**
-3. **数据集配置**：添加数据集 → 搜索勾选 `lab-ppe-kaggle`
-4. **高级配置 → 显卡：V100 16GB**
-   - IDE 保持 JupyterLab，其余不动 → 点「创建」
+> 创建页找不到「经典版」选项，或启动弹窗里没有 V100 → 截图发我。
 
 ---
 
-## 第 3 步：跑一键格
+## 第 3 步：跑一键格（经典版专用）
 
-1. 打开 `outputs/AIStudio_PyTorch_照着抄.txt`
-2. 把**格 1（主一键格）整段**复制进一个 Cell → Shift+Enter
-3. 预计 **2~3 小时**（50 epochs，V100 16GB，batch 16；32GB 卡可改 batch=32），全程实时输出
+1. 打开 `outputs/AIStudio_经典版_照着抄.txt`
+2. 把**格 1 整段**复制进一个 Cell → Shift+Enter
+3. 流程：打印 Python/nvidia-smi 自检 → 装 torch 2.4.1+cu118（约 2GB）→ 装 ultralytics → CUDA 检查 → 解压数据集 → 重写 data.yaml → 下载 yolov8s.pt → 训练 50 epochs（V100 约 2~3 小时）→ 验证 + lab_coat 专项 → 打包 `labppe_weights.zip`
 4. 中断/断线/点数用完都不怕：**重跑同一格**，自动跳过已完成步骤或从 last.pt 续训
 
-txt 里还有：
-
-- **格 2 · 备用 CUDA 修复格**：仅当报 `NVIDIA driver is too old (found version 12000)` 时跑；跑完 Kernel → Restart Kernel，再重跑格 1
-- **格 3 · 效果预览格（可选）**：训完出 24 张验证图检测拼版 `valid_preview.jpg`
+txt 里还有 **格 2 · 效果预览格**（可选）：训完出 24 张验证图检测拼版 `valid_preview.jpg`
 
 ---
 
@@ -66,13 +67,13 @@ txt 里还有：
 
 | 症状 | 处理 |
 |---|---|
-| `import torch` 报 system compatibility | 创建时框架选成 PaddlePaddle 了 → 停环境重建，框架选 **PyTorch** |
-| CUDA 不可用（格 1 assert 报错） | 显卡选错 → 必须 **V100 16GB**，不能用 BI-V150S |
-| `NVIDIA driver is too old (found version 12000)` | 跑 txt 里的格 2 修 CUDA → 重启内核 → 重跑格 1 |
+| `import torch` 报 system compatibility | 说明进了 BML CodeLab——必须用**经典版**项目 |
+| CUDA 不可用（格 1 报错） | 把格 1 从头开始的输出发 AI：多半这台 V100 驱动 CUDA < 11.8，需换 cu116/cu113 版 torch |
+| 镜像 Python < 3.8 | 创建项目时框架版本选**最新 PaddlePaddle**（2.6+）后重建 |
+| 切换/启动报「文件过多过大」 | work 里解压的数据集文件太多 → 跑清理格（或干脆换新项目，数据 zip 在挂载里不会丢） |
 | 训练中断（点数不足/断线） | 重跑格 1，自动续训 |
-| 没找到 lab_ppe_kaggle.zip | 创建时没挂数据集 → 停环境后编辑配置，勾上 `lab-ppe-kaggle` |
+| 没找到 lab_ppe_kaggle.zip | 创建时没挂数据集 → 停环境后编辑项目配置重新挂 |
 | 显存不足 OOM | batch 16 → 8 |
-| 创建弹窗里找不到框架选项 | 展开「高级配置」找「框架/基础镜像」；还没有就截图发我 |
 
 ---
 
