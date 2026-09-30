@@ -105,14 +105,29 @@ def map_class(raw_name: str) -> str | None:
     return None
 
 
+def _iou(a, b) -> float:
+    """两个框的 IoU（xyxy 像素坐标）"""
+    ix1, iy1 = max(a.x1, b.x1), max(a.y1, b.y1)
+    ix2, iy2 = min(a.x2, b.x2), min(a.y2, b.y2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = (a.x2 - a.x1) * (a.y2 - a.y1)
+    area_b = (b.x2 - b.x1) * (b.y2 - b.y1)
+    return inter / (area_a + area_b - inter)
+
+
 class PPEDetector:
     """YOLO PPE 检测器"""
 
-    def __init__(self, weights: str, conf_threshold: float = 0.35, device: str = "auto"):
+    def __init__(self, weights: str, conf_threshold: float = 0.35, device: str = "auto",
+                 imgsz: int = 640):
         from ultralytics import YOLO  # 延迟导入，加快模块加载
         self.weights_path = str(weights)
         self.model = YOLO(self.weights_path)
         self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
         if device == "auto":
             import torch
             self.device = 0 if torch.cuda.is_available() else "cpu"
@@ -129,32 +144,184 @@ class PPEDetector:
             return torch.cuda.get_device_name(self.device)
         return str(self.device)
 
-    def detect(self, frame: np.ndarray, conf: float | None = None) -> list[Detection]:
-        """对单帧图像（BGR ndarray）执行检测，返回业务类别 Detection 列表"""
-        results = self.model.predict(
-            frame, conf=conf or self.conf_threshold, device=self.device,
-            verbose=False, imgsz=640,
-        )
+    def detect(self, frame: np.ndarray, conf: float | None = None,
+               tile_recheck: bool = False) -> list[Detection]:
+        """对单帧图像（BGR ndarray）执行检测，返回业务类别 Detection 列表
+
+        双尺度：imgsz 与 640 不同时，两个尺度各推理一次取并集（不同目标
+        在不同分辨率下置信度差异大，如小目标护目镜需 1280、大画面防毒
+        面具在 640 更稳）。
+        tile_recheck：额外做 2×2 带重叠切片复检（大幅提升小目标召回，
+        如正面透明护目镜），代价是推理耗时约 ×2.5，仅建议图片模式开启。
+        """
+        scales = sorted({640, self.imgsz})
         detections: list[Detection] = []
-        if not results:
-            return detections
-        r = results[0]
-        boxes = r.boxes
-        if boxes is None:
-            return detections
-        for i in range(len(boxes)):
-            cls_idx = int(boxes.cls[i].item())
-            raw = self.raw_names.get(cls_idx, str(cls_idx))
-            mapped = self.supported_map.get(cls_idx)
-            if mapped is None:
-                continue  # 非业务类别（head/ear/tools 等），跳过
-            xyxy = boxes.xyxy[i].tolist()
-            detections.append(Detection(
-                cls_name=mapped, raw_cls=raw,
-                conf=float(boxes.conf[i].item()),
-                x1=xyxy[0], y1=xyxy[1], x2=xyxy[2], y2=xyxy[3],
-            ))
-        return detections
+        for sz in scales:
+            results = self.model.predict(
+                frame, conf=conf or self.conf_threshold, device=self.device,
+                verbose=False, imgsz=sz,
+            )
+            if not results:
+                continue
+            boxes = results[0].boxes
+            if boxes is None:
+                continue
+            for i in range(len(boxes)):
+                cls_idx = int(boxes.cls[i].item())
+                raw = self.raw_names.get(cls_idx, str(cls_idx))
+                mapped = self.supported_map.get(cls_idx)
+                if mapped is None:
+                    continue  # 非业务类别（head/ear/tools 等），跳过
+                xyxy = boxes.xyxy[i].tolist()
+                detections.append(Detection(
+                    cls_name=mapped, raw_cls=raw,
+                    conf=float(boxes.conf[i].item()),
+                    x1=xyxy[0], y1=xyxy[1], x2=xyxy[2], y2=xyxy[3],
+                ))
+        # 先对全图结果做合理性过滤，再做切片支持判断：
+        # 否则底部鞋子等全图误检会错误地"支持"切片手套准入（②img_ed8a1e3e 连锁误检）
+        detections = self._filter_implausible(detections, frame)
+        if tile_recheck:
+            detections += self._tile_detect(frame, conf, full_dets=detections)
+        merged = self._nms_merge(detections) if (len(scales) > 1 or tile_recheck) else detections
+        return self._filter_implausible(merged, frame)
+
+    # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 25%
+    # （白大褂袖子/衣料纹理被误认成手套时框可占画面 30%+，如特写构图）
+    _GLOVES_MAX_AREA_RATIO = 0.25
+    # 手套框若整体位于画面底部 ~12%（y1 > 0.88h），实际是鞋/脚（白鞋被认成手套，
+    # 如②img_ed8a1e3e 鞋子 0.52）；正常站姿下手很少低到画面最底部
+    _GLOVES_BOTTOM_Y = 0.86
+
+    def _filter_implausible(self, detections: list[Detection],
+                            frame: np.ndarray) -> list[Detection]:
+        h, w = frame.shape[:2]
+        out = []
+        for d in detections:
+            if d.cls_name == "gloves":
+                if (d.x2 - d.x1) * (d.y2 - d.y1) > self._GLOVES_MAX_AREA_RATIO * w * h:
+                    continue  # 面积超限（袖子/衣料误检）
+                if d.y1 > self._GLOVES_BOTTOM_Y * h:
+                    continue  # 画面底部（鞋/脚误检）
+                if self._is_reflection(d, detections, frame, h):
+                    continue  # 玻璃台面倒影误检
+            out.append(d)
+        return out
+
+    # 倒影判据：手套框位于画面底部 25%，正上方有横向重叠的护目镜/口罩框
+    # （玻璃台面把 PPE 镜像到下方，如 img_104e87bc 台面倒影被认成手套 0.66）
+    _REFLECT_BOTTOM_Y = 0.75
+
+    def _is_reflection(self, d: Detection, detections: list[Detection],
+                       frame: np.ndarray, h: float) -> bool:
+        if d.y1 <= self._REFLECT_BOTTOM_Y * h:
+            return False
+        dw = d.x2 - d.x1
+        for o in detections:
+            if o.cls_name not in ("goggles", "mask") or o is d:
+                continue
+            x_overlap = min(d.x2, o.x2) - max(d.x1, o.x1)
+            if x_overlap > 0.5 * min(dw, o.x2 - o.x1) and d.y1 > o.y2 + 0.03 * h:
+                return True  # 底部 + 正上方有同位 PPE = 台面倒影
+        return False
+
+    # 切片复检类与逐类过滤：lab_coat 全图对竖长/特写构图不稳，也纳入切片
+    _TILE_CLASSES = {"gloves", "mask", "goggles", "lab_coat"}
+    _TILE_MAX_AREA = {"gloves": 0.08, "mask": 0.08, "goggles": 0.08,
+                      "lab_coat": 0.75}  # 框占切片面积上限（白墙填满切片的误检≈100%）
+    _TILE_GOGGLES_MAX_AR = 1.5   # 护目镜框宽高比上限：真护目镜≈0.65（含绑带偏高），普通眼镜误检≈2.2（扁宽）
+
+    def _tile_detect(self, frame: np.ndarray, conf: float | None = None,
+                     overlap: float = 0.25,
+                     full_dets: list[Detection] | None = None) -> list[Detection]:
+        """2×2 带重叠切片推理，坐标平移回原图后返回（不再做 NMS，由上层统一合并）
+
+        gloves 特殊分级准入：
+        - 全图已有手套检出（full_has_gloves）→ 切片结果直接收；
+        - 否则需"强证据"：conf≥0.65 且框占切片 6%~30% 且框内非肤色
+          （裸手放大后易被误检：老照片持械手 0.68、病床裸手 0.66、
+          ③图裸手 0.52——都是肤色+小框；真彩色手套如 teal/蓝/银箔
+          置信度高、框大、非肤色，如 teal 0.79、蓝手套 0.85）。
+        """
+        h, w = frame.shape[:2]
+        th, tw = h // 2, w // 2
+        full_has_gloves = bool(full_dets) and any(d.cls_name == "gloves" for d in full_dets)
+        out: list[Detection] = []
+        for ty in (0, h - th):
+            for tx in (0, w - tw):
+                tile = frame[ty:ty + th, tx:tx + tw]
+                results = self.model.predict(
+                    tile, conf=conf or self.conf_threshold, device=self.device,
+                    verbose=False, imgsz=self.imgsz,
+                )
+                if not results or results[0].boxes is None:
+                    continue
+                boxes = results[0].boxes
+                for i in range(len(boxes)):
+                    cls_idx = int(boxes.cls[i].item())
+                    mapped = self.supported_map.get(cls_idx)
+                    if mapped is None or mapped not in self._TILE_CLASSES:
+                        continue
+                    xyxy = boxes.xyxy[i].tolist()
+                    bw, bh = xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]
+                    area_ratio = bw * bh / (tw * th)
+                    if mapped == "gloves":
+                        if area_ratio > self._GLOVES_TILE_MAX_AREA:
+                            continue  # 放大切片里的超大框 = 衣料误检（坏图 0.87@33%），丢弃
+                        if not full_has_gloves:
+                            if (float(boxes.conf[i].item()) < self._GLOVES_TILE_MIN_CONF
+                                    or area_ratio < self._GLOVES_TILE_MIN_AREA
+                                    or self._skin_ratio(tile, xyxy) > self._GLOVES_SKIN_MAX):
+                                continue  # 弱证据 + 肤色 = 裸手误检，丢弃
+                    elif area_ratio > self._TILE_MAX_AREA[mapped]:
+                        continue  # 放大切片里的超大框 = 误检，丢弃
+                    if mapped == "goggles" and bw / max(bh, 1e-6) > self._TILE_GOGGLES_MAX_AR:
+                        continue  # 扁宽框 = 普通眼镜误检，丢弃
+                    out.append(Detection(
+                        cls_name=mapped,
+                        raw_cls=self.raw_names.get(cls_idx, str(cls_idx)),
+                        conf=float(boxes.conf[i].item()),
+                        x1=xyxy[0] + tx, y1=xyxy[1] + ty,
+                        x2=xyxy[2] + tx, y2=xyxy[3] + ty,
+                    ))
+        return out
+
+    # 切片手套"强证据"准入参数（全图无手套支持时）
+    _GLOVES_TILE_MAX_AREA = 0.30   # 真手套可到 26%（⑤蓝手套），衣料误检 33% 被拦
+    _GLOVES_TILE_MIN_CONF = 0.65   # 裸手误检普遍 ≤0.68 且多为 0.5 上下
+    _GLOVES_TILE_MIN_AREA = 0.06   # 裸手小碎框 1%~4%；真手套在切片里 ≥8%
+    _GLOVES_SKIN_MAX = 0.35        # 框内肤色像素占比上限：裸手高、彩色/银色手套接近 0
+
+    @staticmethod
+    def _skin_ratio(tile: np.ndarray, xyxy: list[float]) -> float:
+        """框内（中心 70% 区域）YCrCb 肤色像素占比，用于区分裸手与真实手套"""
+        h, w = tile.shape[:2]
+        x1, y1, x2, y2 = (max(0, int(v)) for v in xyxy)
+        roi = tile[y1:y2, x1:x2]
+        if roi.size == 0:
+            return 0.0
+        ch, cw = roi.shape[:2]
+        roi = roi[int(ch * 0.15):int(ch * 0.85) or ch, int(cw * 0.15):int(cw * 0.85) or cw]
+        if roi.size == 0:
+            return 0.0
+        ycc = cv2.cvtColor(roi, cv2.COLOR_BGR2YCrCb)
+        skin = ((ycc[:, :, 0] > 40) & (ycc[:, :, 1] >= 135) & (ycc[:, :, 1] <= 180)
+                & (ycc[:, :, 2] >= 85) & (ycc[:, :, 2] <= 135))
+        return float(skin.mean())
+
+    @staticmethod
+    def _nms_merge(detections: list[Detection], iou_thr: float = 0.55) -> list[Detection]:
+        """类内贪心 NMS：合并多尺度重复框，保留高置信度"""
+        merged: list[Detection] = []
+        for cls in {d.cls_name for d in detections}:
+            group = sorted((d for d in detections if d.cls_name == cls),
+                           key=lambda d: -d.conf)
+            for d in group:
+                if any(_iou(d, m) > iou_thr for m in merged):
+                    continue
+                merged.append(d)
+        merged.sort(key=lambda d: -d.conf)
+        return merged
 
     @staticmethod
     def filter_by_class(detections, cls_name):

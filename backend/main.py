@@ -37,23 +37,32 @@ for d in (UPLOAD_DIR, OUT_IMG_DIR, OUT_VID_DIR):
 app = FastAPI(title="实验室安全智能巡检与违规预警系统", version="0.1.0-MVP")
 
 _detector = None
-_pipeline = None
+_pipeline = None        # 视频管线（快速，无切片复检）
+_pipeline_img = None    # 图片管线（开启 2×2 切片复检，提升小目标召回）
 
 
 def get_pipeline():
     """懒加载模型管线（首次请求时加载，避免服务启动卡顿）"""
-    global _detector, _pipeline
+    global _detector, _pipeline, _pipeline_img
     if _pipeline is None:
         from ai.detector import PPEDetector
         from video.processor import InspectionPipeline
         # 模型选择：优先加载自制 4 类模型（labppe_v8s.pt），没有则回退 SH17 官方权重
         _custom = ROOT / "ai" / "model" / "labppe_v8s.pt"
         _fallback = ROOT / "ai" / "model" / "sh17_yolov8s.pt"
-        _detector = PPEDetector(_custom if _custom.exists() else _fallback)
+        _detector = PPEDetector(_custom if _custom.exists() else _fallback, imgsz=1280)
         from rule_engine.engine import SafetyRuleEngine
         _pipeline = InspectionPipeline(
-            detector=_detector, engine=SafetyRuleEngine())
+            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=False)
+        _pipeline_img = InspectionPipeline(
+            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=True)
     return _pipeline
+
+
+def get_image_pipeline():
+    """图片检测专用管线（含切片复检）"""
+    get_pipeline()
+    return _pipeline_img
 
 
 @app.on_event("startup")
@@ -112,7 +121,7 @@ def violations(vtype: str | None = None, severity: str | None = None,
 # ---------- 检测：图片 ----------
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
-    pipeline = get_pipeline()
+    pipeline = get_image_pipeline()
     suffix = Path(file.filename or "upload.jpg").suffix or ".jpg"
     save_path = UPLOAD_DIR / f"img_{uuid.uuid4().hex[:8]}{suffix}"
     with open(save_path, "wb") as f:
