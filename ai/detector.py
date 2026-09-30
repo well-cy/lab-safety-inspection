@@ -186,9 +186,10 @@ class PPEDetector:
         merged = self._nms_merge(detections) if (len(scales) > 1 or tile_recheck) else detections
         return self._filter_implausible(merged, frame)
 
-    # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 25%
-    # （白大褂袖子/衣料纹理被误认成手套时框可占画面 30%+，如特写构图）
-    _GLOVES_MAX_AREA_RATIO = 0.25
+    # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 20%
+    # （白大褂袖子/衣料被误认成手套时框可达画面 25%~33%：特写构图 33%、
+    #   img_64166c86 整条防护服袖子 24.6%——原 0.25 上限被擦线混过，收紧到 0.20）
+    _GLOVES_MAX_AREA_RATIO = 0.20
     # 手套框若整体位于画面底部 ~12%（y1 > 0.88h），实际是鞋/脚（白鞋被认成手套，
     # 如②img_ed8a1e3e 鞋子 0.52）；正常站姿下手很少低到画面最底部
     _GLOVES_BOTTOM_Y = 0.86
