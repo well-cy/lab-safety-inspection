@@ -47,17 +47,26 @@ BAR_H = 36
 MIN_CROP_PX = 96          # 框太小则至少裁这么大一块，保证周围有上下文
 
 
-def fit_square(img: np.ndarray, size: int) -> np.ndarray:
-    """等比缩放到 size×size 画布内（留白居中），不拉伸变形。"""
+def fit_square(img: np.ndarray, size: int, up_interp: int = cv2.INTER_LANCZOS4) -> np.ndarray:
+    """等比缩放到 size×size 画布内（留白居中），不拉伸变形。
+    放大默认用 LANCZOS4（比默认 LINEAR 明显更锐利，判"眼镜 vs 护目镜"这类细节必需）。"""
     h, w = img.shape[:2]
     s = size / max(h, w)
     nw, nh = max(1, int(round(w * s))), max(1, int(round(h * s)))
-    interp = cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR
+    interp = cv2.INTER_AREA if s < 1 else up_interp
     r = cv2.resize(img, (nw, nh), interpolation=interp)
     canvas = np.full((size, size, 3), BG, np.uint8)
     y0, x0 = (size - nh) // 2, (size - nw) // 2
     canvas[y0:y0 + nh, x0:x0 + nw] = r
     return canvas
+
+
+def unsharp(img: np.ndarray, amount: float) -> np.ndarray:
+    """非锐化掩模：监控截图放大后偏软，适度锐化能让镜腿/头带这类细结构显现。"""
+    if amount <= 0:
+        return img
+    blur = cv2.GaussianBlur(img, (0, 0), 1.2)
+    return cv2.addWeighted(img, 1 + amount, blur, -amount, 0)
 
 
 def clip_text(s: str, n: int) -> str:
@@ -98,25 +107,26 @@ def build_jobs(args, root: Path):
     rels = []
     if args.list:
         for ln in Path(args.list).read_text(encoding="utf-8").splitlines():
-            rel = ln.split("\t")[0].strip()
+            parts = ln.split("\t")
+            rel = parts[0].strip()
+            flags = parts[1].strip() if len(parts) > 1 else ""
             if rel and not rel.startswith("#"):
-                rels.append(rel)
+                rels.append((rel, flags))
     else:
         for sp in ("train", "valid", "test"):
             idir = root / "images" / sp
             if idir.is_dir():
-                rels += [f"{sp}/{p.name}" for p in sorted(idir.iterdir())
+                rels += [(f"{sp}/{p.name}", "") for p in sorted(idir.iterdir())
                          if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}]
 
     recs, pending = [], []
-    for rel in rels:
+    for rel, flags in rels:
         sp, name = rel.split("/", 1)
         stem = Path(name).stem
         ip = root / "images" / sp / name
         lp = root / "labels" / sp / (stem + ".txt")
         if not ip.exists() or not lp.exists():
             continue
-        h = w = None
         img = imread_u(ip)
         if img is None:
             continue
@@ -137,7 +147,8 @@ def build_jobs(args, root: Path):
             y1, y2 = (yc - bh / 2) * h, (yc + bh / 2) * h
             boxes.append((x1, y1, x2, y2))
         if boxes:
-            pending.append({"rel": rel, "sp": sp, "ip": ip, "lp": lp, "boxes": boxes})
+            pending.append({"rel": rel, "sp": sp, "ip": ip, "lp": lp,
+                            "boxes": boxes, "flags": flags})
 
     print(f"[候选] 含目标框的图 {len(pending)} 张 / 框 {sum(len(r['boxes']) for r in pending)} 个")
 
@@ -160,7 +171,8 @@ def build_jobs(args, root: Path):
     for r in pending:
         for k, (x1, y1, x2, y2) in enumerate(r["boxes"]):
             recs.append({"rel": r["rel"], "sp": r["sp"], "ip": r["ip"], "lp": r["lp"],
-                         "k": k, "box": (x1, y1, x2, y2), "names": names})
+                         "k": k, "box": (x1, y1, x2, y2), "names": names,
+                         "flags": r.get("flags", "")})
 
     # 阶段内限制条数（按"格"计数）
     if args.limit:
@@ -200,9 +212,14 @@ def main() -> int:
     ap.add_argument("--names", default="", help="手工类别映射，如 --names mask,gloves,lab_coat,goggles")
     ap.add_argument("--cols", type=int, default=5)
     ap.add_argument("--rows", type=int, default=4)
-    ap.add_argument("--ctx", type=int, default=250, help="左侧原图定位格边长（像素）")
-    ap.add_argument("--crop", type=int, default=310, help="右侧放大特写格边长（像素）")
+    ap.add_argument("--layout", choices=["both", "crop"], default="both",
+                    help="both=左原图定位+右放大（默认）；crop=只放放大特写（格更大更清楚，"
+                         "远景小框判定用这个）")
+    ap.add_argument("--ctx", type=int, default=250, help="layout=both 时左侧原图定位格边长（像素）")
+    ap.add_argument("--crop", type=int, default=310, help="放大特写格边长（像素）")
     ap.add_argument("--pad", type=float, default=0.6, help="放大时框外扩比例（0.6=框边长 60%% 的留白）")
+    ap.add_argument("--sharpen", type=float, default=0.0,
+                    help="非锐化掩模强度（0=关；监控截图放大后建议 0.6~1.0）")
     ap.add_argument("--random", type=int, default=0, help="随机抽 N 张（按图计）")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--limit", type=int, default=0, help="本批最多出多少格（按框计，0=不限）")
@@ -221,8 +238,10 @@ def main() -> int:
         return 1
 
     per = args.cols * args.rows
-    cell_w = args.ctx + args.crop + PAD * 3
-    cell_h = max(args.ctx, args.crop) + BAR_H + PAD * 2
+    two_panel = args.layout == "both"
+    panel = args.ctx + args.crop + PAD if two_panel else args.crop
+    cell_w = panel + PAD * 2
+    cell_h = (args.crop if two_panel else args.crop) + BAR_H + PAD * 2
     index_lines, item_lines, skipped = [], [], []
     idx = args.start_index
     sheets = 0
@@ -240,60 +259,65 @@ def main() -> int:
                 skipped.append(str(rec["ip"]))
                 continue
 
-            # 左：原图（画全部框，用于定位）
-            ctx = draw(rec["ip"], rec["lp"], rec["names"], None)
-            if ctx is None:
-                skipped.append(str(rec["ip"]))
-                continue
             crop, rel = crop_box(img, rec["box"], args.pad)
             if crop is None:
                 skipped.append(str(rec["ip"]))
                 continue
+            # 先锐化再画框：反了会产生彩色镶边，干扰判读
+            crop = unsharp(crop, args.sharpen)
             cv2.rectangle(crop, rel[:2], rel[2:], (0, 0, 255), 2)  # 框线：BGR 红
 
             cell = np.full((cell_h, cell_w, 3), 255, np.uint8)
             y0, x0 = PAD, PAD
-            # 左侧原图
-            cell[y0:y0 + args.ctx, x0:x0 + args.ctx] = fit_square(ctx, args.ctx)
-            cv2.rectangle(cell, (x0, y0), (x0 + args.ctx - 1, y0 + args.ctx - 1), (150, 150, 150), 1)
-            cv2.putText(cell, "full", (x0 + 4, y0 + args.ctx - 6), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4, (90, 90, 90), 1)
-            # 右侧放大
-            x1 = x0 + args.ctx + PAD
+            x1 = x0
+            if two_panel:
+                # 左侧原图（画全部框，用于定位）
+                ctx = draw(rec["ip"], rec["lp"], rec["names"], None)
+                if ctx is None:
+                    skipped.append(str(rec["ip"]))
+                    continue
+                cell[y0:y0 + args.ctx, x0:x0 + args.ctx] = fit_square(ctx, args.ctx)
+                cv2.rectangle(cell, (x0, y0), (x0 + args.ctx - 1, y0 + args.ctx - 1),
+                              (150, 150, 150), 1)
+                cv2.putText(cell, "full", (x0 + 4, y0 + args.ctx - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4, (90, 90, 90), 1)
+                x1 = x0 + args.ctx + PAD
+            # 放大特写（占满格）
             cell[y0:y0 + args.crop, x1:x1 + args.crop] = fit_square(crop, args.crop)
-            cv2.rectangle(cell, (x1, y0), (x1 + args.crop - 1, y0 + args.crop - 1), (150, 150, 150), 1)
-            cv2.putText(cell, "zoom", (x1 + 4, y0 + args.crop - 6), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4, (90, 90, 90), 1)
+            cv2.rectangle(cell, (x1, y0), (x1 + args.crop - 1, y0 + args.crop - 1),
+                          (150, 150, 150), 1)
 
-            # 编号徽标
-            badge_w = 16 + 13 * len(str(idx))
-            cv2.rectangle(cell, (x0, y0), (x0 + badge_w, y0 + 28), (0, 0, 0), -1)
-            cv2.putText(cell, str(idx), (x0 + 8, y0 + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+            # 编号徽标（大号，便于回报）
+            badge_w = 22 + 18 * len(str(idx))
+            cv2.rectangle(cell, (x1, y0), (x1 + badge_w, y0 + 40), (0, 0, 0), -1)
+            cv2.putText(cell, str(idx), (x1 + 10, y0 + 32), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
                         (255, 255, 255), 2)
 
-            # 底部文字：文件名 + 框序号
-            ty = y0 + max(args.ctx, args.crop) + 22
-            cv2.putText(cell, clip_text(rec["ip"].stem, 34), (x0, ty), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.42, (30, 30, 30), 1)
-            cv2.putText(cell, f"box #{rec['k'] + 1}", (x1, ty), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45, (0, 0, 230), 1)
+            # 底部文字：分组标签（红）+ 文件名
+            ty = y0 + args.crop + 24
+            if rec.get("flags"):
+                cv2.putText(cell, clip_text(rec["flags"], 30), (x0, ty),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 230), 2)
+            cv2.putText(cell, clip_text(rec["ip"].stem, 40), (x0, ty + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (60, 60, 60), 1)
 
             sy, sx = r * cell_h, c * cell_w
             sheet[sy:sy + cell_h, sx:sx + cell_w] = cell
 
-            index_lines.append(f"{idx:>4}\t{rec['sp']}/{rec['ip'].name}\tbox #{rec['k'] + 1}")
+            index_lines.append(f"{idx:>4}\t{rec['sp']}/{rec['ip'].name}\tbox #{rec['k'] + 1}\t"
+                               f"{rec.get('flags', '')}")
             item_lines.append(f"{rec['sp']}/{rec['ip'].name}")
             idx += 1
 
-        cv2.imencode(".jpg", sheet, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tofile(
+        cv2.imencode(".jpg", sheet, [cv2.IMWRITE_JPEG_QUALITY, 95])[1].tofile(
             str(out / f"sheet_{sheets:02d}.jpg"))
         print(f"  图版 {sheets:02d}: {len(chunk)} 格 → {out / f'sheet_{sheets:02d}.jpg'}")
 
     header = [
         f"# {args.out} 复查对照表 —— 编号 → 图片 / 框（{len(index_lines)} 格，共 {sheets} 版）",
-        "# 每格 = 一个目标框：左=原图(定位)  右=该框放大(判定内容)",
-        "# 口径：判「框里是不是护目镜」——不是则回报该编号（如：3、9 是眼镜）",
-        "# 格式: 编号 <TAB> split/文件名 <TAB> 框序号",
+        "# 每格一个目标框；红字为分组标签（如 A1=某机位某位置组）",
+        "# 口径：判「框里是不是护目镜」——不是则回报（如：3、9 是眼镜；或 A2 组全是眼镜）",
+        "# 格式: 编号 <TAB> split/文件名 <TAB> 框序号 <TAB> 分组",
     ]
     (out / "index.txt").write_text("\n".join(header + index_lines) + "\n", encoding="utf-8")
     (out / "items.txt").write_text("\n".join(dict.fromkeys(item_lines)) + "\n", encoding="utf-8")
