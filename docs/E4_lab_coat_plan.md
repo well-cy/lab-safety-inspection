@@ -116,6 +116,16 @@ E2 模型实测对连体防护服零识别（conf 降到 0.05 仍无输出）。
 
 **合并后 `data/lab_ppe/train`：图片 10812→10841；四类框 mask 1630 / gloves 9331 / lab_coat 2380 / goggles 5199**（lab_coat 净增 366，均为防护服形态）。manifest.csv 已追加 keep/patch/drop 全部记录。
 
+### B+3. ppes_* 家族削减（2026-09-30，负责人：许婧雯）
+
+增广抽检牵出的家族级标签审计（详见 `docs/E5_补数据与重训方案.md` §2.5）：`ppes_*`（源 `data/raw/ppes_kaxsi`）占 train 的 **47%（5,096 张）**，经 30 张随机抽检确认**全部来自同一间仓库的同一台 CCTV 机位**，且源数据只标 glove/goggles 两类——图里的白大褂/口罩一律未标注（=背景），是 lab_coat/mask 短板与"眼镜→护目镜"毒标签的最大来源。
+
+处理（`tools/reduce_family_sample.py`，剔除清单 `data/_ppes_reduce_drop.txt`）：按 9 个抽帧批次等间隔抽样，保留 **1,401 张（27.5%）**，其余 **3,695 张**连同标签移入 `data/_rejected/ppes_reduce_20260930/`（可整体移回）。
+
+**削减后 `data/lab_ppe/train`：图片 10841→7146；四类框 mask 1630 / gloves 7474 / lab_coat 2380 / goggles 3019，合计 14,503**。
+
+> gloves 占比削减后仍达 51.5%（不降反微升），说明手套样本大量来自 `ppes_*` 之外的数据源——类别失衡还需靠"补 mask/lab_coat + 控制 gloves"解决，削减只解决场景单一与领域错配。valid/test 未做任何改动。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：
