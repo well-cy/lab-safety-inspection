@@ -90,10 +90,12 @@ class InspectionPipeline:
     """巡检处理管线：封装 detector + matcher + roi + rule engine"""
 
     def __init__(self, detector: PPEDetector, engine: SafetyRuleEngine | None = None,
-                 screenshot_dir="outputs/screenshots", tile_recheck: bool = False):
+                 screenshot_dir="outputs/screenshots", tile_recheck: bool = False,
+                 person_detector=None):
         self.detector = detector
         self.engine = engine or SafetyRuleEngine()
         self.tile_recheck = tile_recheck  # 图片模式建议开启（小目标召回），视频模式关闭（性能）
+        self.person_detector = person_detector  # 可选 COCO 人员检测器（逐人判定用）
         root = Path(__file__).resolve().parent.parent
         self.screenshot_dir = root / screenshot_dir
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -102,6 +104,10 @@ class InspectionPipeline:
         """对单帧执行完整分析，返回 (person_states, events, detections)"""
         h, w = frame.shape[:2]
         dets = self.detector.detect(frame, tile_recheck=self.tile_recheck)
+        # 人员锚点：接了 COCO person 检测器时，用真实 person 框做 PPE 归属，
+        # 支持多人分别判定；未接或未检出 person 时，匹配层回退到虚拟聚合人员
+        if self.person_detector is not None:
+            dets = self.person_detector.detect(frame) + dets
         states = match_person_ppe(dets)
         states = annotate_person_states(states, areas, w, h)
         events = self.engine.evaluate(states, frame_time=frame_time)

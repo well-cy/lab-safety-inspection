@@ -118,6 +118,70 @@ def _iou(a, b) -> float:
     return inter / (area_a + area_b - inter)
 
 
+class PersonDetector:
+    """COCO 预训练人员检测器（person 类锚点）
+
+    自制 4 类 PPE 模型不含 person 类，规则层只能把全部 PPE 聚合成 1 个
+    "虚拟人员"，导致：多人场景被合并成 1 人、PPE 归属错乱、无人物的
+    产品图也报"1 人"。本检测器提供真实 person 框作为锚点，交给
+    ppe_matcher 做 Person-PPE 空间归属，从而支持逐人合规判定。
+
+    刻意与 PPE 判定解耦：只输出 person，不参与任何 PPE 类别判断。
+    """
+
+    _PERSON_CLASS_ID = 0  # COCO 类别表中 person = 0
+    # 人员框合理性过滤：手/手臂等局部被误认成 person 时框极小（实测 1~3% 画面，
+    # 同期真人 42%），这类碎片若当锚点会凭空造出多个虚拟人 + 假违规
+    _MIN_AREA_RATIO = 0.03        # 绝对下限：不足画面 3% 的框丢弃
+    _MIN_REL_TO_LARGEST = 0.15    # 相对下限：不足最大人员框 15% 的框丢弃（保留远景小人）
+
+    def __init__(self, weights: str, conf_threshold: float = 0.35,
+                 device: str = "auto", imgsz: int = 640):
+        from ultralytics import YOLO
+        self.weights_path = str(weights)
+        self.model = YOLO(self.weights_path)
+        self.conf_threshold = conf_threshold
+        self.imgsz = imgsz
+        if device == "auto":
+            import torch
+            self.device = 0 if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+
+    def detect(self, frame: np.ndarray,
+               conf: float | None = None) -> list[Detection]:
+        """返回画面中的人员 Detection 列表（cls_name 恒为 "person"）"""
+        results = self.model.predict(
+            frame, conf=conf or self.conf_threshold, classes=[self._PERSON_CLASS_ID],
+            device=self.device, verbose=False, imgsz=self.imgsz,
+        )
+        out: list[Detection] = []
+        if not results or results[0].boxes is None:
+            return out
+        h, w = frame.shape[:2]
+        frame_area = float(h * w)
+        boxes = results[0].boxes
+        cand: list[Detection] = []
+        for i in range(len(boxes)):
+            xyxy = boxes.xyxy[i].tolist()
+            cand.append(Detection(
+                cls_name="person", raw_cls="person",
+                conf=float(boxes.conf[i].item()),
+                x1=xyxy[0], y1=xyxy[1], x2=xyxy[2], y2=xyxy[3],
+            ))
+        if not cand:
+            return out
+        largest = max((d.x2 - d.x1) * (d.y2 - d.y1) for d in cand)
+        for d in cand:
+            area = (d.x2 - d.x1) * (d.y2 - d.y1)
+            if area < self._MIN_AREA_RATIO * frame_area:
+                continue  # 碎块（手/臂局部）
+            if area < self._MIN_REL_TO_LARGEST * largest:
+                continue  # 相对过小，判为同场景内的误检碎片
+            out.append(d)
+        return out
+
+
 class PPEDetector:
     """YOLO PPE 检测器"""
 

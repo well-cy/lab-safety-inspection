@@ -45,17 +45,23 @@ def get_pipeline():
     """懒加载模型管线（首次请求时加载，避免服务启动卡顿）"""
     global _detector, _pipeline, _pipeline_img
     if _pipeline is None:
-        from ai.detector import PPEDetector
+        from ai.detector import PPEDetector, PersonDetector
         from video.processor import InspectionPipeline
         # 模型选择：优先加载自制 4 类模型（labppe_v8s.pt），没有则回退 SH17 官方权重
         _custom = ROOT / "ai" / "model" / "labppe_v8s.pt"
         _fallback = ROOT / "ai" / "model" / "sh17_yolov8s.pt"
         _detector = PPEDetector(_custom if _custom.exists() else _fallback, imgsz=1280)
+        # 人员锚点：COCO 预训练模型（自带 person 类），用于多人分别判定；
+        # 缺文件时自动降级为虚拟聚合人员（原行为），不影响服务可用性
+        _person_w = ROOT / "ai" / "model" / "yolov8n_coco.pt"
+        _person_det = PersonDetector(_person_w) if _person_w.exists() else None
         from rule_engine.engine import SafetyRuleEngine
         _pipeline = InspectionPipeline(
-            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=False)
+            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=False,
+            person_detector=_person_det)
         _pipeline_img = InspectionPipeline(
-            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=True)
+            detector=_detector, engine=SafetyRuleEngine(), tile_recheck=True,
+            person_detector=_person_det)
     return _pipeline
 
 
