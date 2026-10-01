@@ -235,31 +235,18 @@ async def detect_video(file: UploadFile = File(...), lab_id: int = Form(1),
 # ---------- 设置 ----------
 @app.get("/api/settings")
 def get_settings():
-    conn = db.get_conn()
-    labs = [dict(r) for r in conn.execute("SELECT * FROM laboratories").fetchall()]
-    for lab in labs:
-        lab["areas"] = [dict(r) for r in conn.execute(
-            "SELECT * FROM areas WHERE lab_id=?", (lab["id"],)).fetchall()]
-        for a in lab["areas"]:
-            a["required_ppe"] = [r["ppe_type"] for r in conn.execute(
-                "SELECT ppe_type FROM safety_rules WHERE area_id=? AND required=1",
-                (a["id"],)).fetchall()]
-    conn.close()
-    return {"labs": labs}
+    # SQL 已收敛到 database 层；其中含 ORDER BY，保证区域内 required_ppe 顺序稳定
+    # （修复原实现顺序不固定、与 INTERFACE_CONTRACT 6.8 示例不一致的问题）
+    return {"labs": db.list_labs_with_areas()}
 
 
 @app.post("/api/settings/lab")
 async def create_lab(name: str = Form(...), description: str = Form("")):
-    conn = db.get_conn()
     try:
-        conn.execute("INSERT INTO laboratories(name, description) VALUES(?,?)",
-                     (name, description))
-        conn.commit()
+        db.create_lab(name, description)
     except sqlite3.IntegrityError:
         # 只捕获唯一约束冲突；其他异常（如磁盘故障）应保持 5xx 以暴露问题
         return bad_request("实验室名称已存在")
-    finally:
-        conn.close()
     return {"ok": True}
 
 
@@ -283,26 +270,13 @@ async def create_area(lab_id: int = Form(...), name: str = Form(...),
         return bad_request(f"不支持的 PPE 类型: {','.join(invalid)}；"
                            f"可选值: {','.join(ALLOWED_PPE)}")
 
-    conn = db.get_conn()
-    cur = conn.execute(
-        "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
-        (lab_id, name, x1, y1, x2, y2))
-    area_id = cur.lastrowid
-    for ppe in ppe_list:
-        conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
-                     " VALUES(?,?,1)", (area_id, ppe))
-    conn.commit()
-    conn.close()
+    area_id = db.create_area(lab_id, name, x1, y1, x2, y2, ppe_list)
     return {"ok": True, "area_id": area_id}
 
 
 @app.delete("/api/settings/area/{area_id}")
 def delete_area(area_id: int):
-    conn = db.get_conn()
-    conn.execute("DELETE FROM safety_rules WHERE area_id=?", (area_id,))
-    conn.execute("DELETE FROM areas WHERE id=?", (area_id,))
-    conn.commit()
-    conn.close()
+    db.delete_area(area_id)
     return {"ok": True}
 
 

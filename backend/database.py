@@ -304,3 +304,87 @@ def statistics():
         "SELECT severity s, COUNT(*) c FROM violation_events GROUP BY severity").fetchall()]
     conn.close()
     return {"by_day": by_day, "by_type": by_type, "by_severity": by_severity}
+
+
+# ---------------- 配置管理（实验室 / 区域 / PPE 规则） ----------------
+# 说明：原先这些 SQL 直接写在 backend/main.py 里（技术债清单 #5：
+#       "设置端点裸 SQL 绕过 database 层"），本次统一收敛到这里。
+
+def list_labs_with_areas() -> list:
+    """
+    读取全部实验室，及其下属区域与各区域的 PPE 要求（供 GET /api/settings 使用）。
+
+    统一在此加 ORDER BY，保证返回顺序稳定：
+      - laboratories / areas 按 id 升序
+      - required_ppe 按 safety_rules.id（即配置时的顺序）升序
+
+    修复的问题：原实现无 ORDER BY，SQLite 返回顺序不保证，实测
+    required_ppe 会返回 ["gloves","lab_coat","mask"]，与
+    docs/INTERFACE_CONTRACT.md 6.8 示例的 ["mask","gloves","lab_coat"] 不一致；
+    若前端按顺序渲染会显示错乱。加 ORDER BY 后与契约一致。
+    """
+    conn = get_conn()
+    labs = [dict(r) for r in conn.execute(
+        "SELECT * FROM laboratories ORDER BY id").fetchall()]
+    for lab in labs:
+        lab["areas"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM areas WHERE lab_id=? ORDER BY id",
+            (lab["id"],)).fetchall()]
+        for area in lab["areas"]:
+            area["required_ppe"] = [r["ppe_type"] for r in conn.execute(
+                "SELECT ppe_type FROM safety_rules WHERE area_id=? AND required=1"
+                " ORDER BY id", (area["id"],)).fetchall()]
+    conn.close()
+    return labs
+
+
+def create_lab(name: str, description: str = "") -> int:
+    """
+    新建实验室，返回新记录 id。
+    名称重复时抛出 sqlite3.IntegrityError，由调用方（API 层）转为 400。
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO laboratories(name, description) VALUES(?,?)",
+            (name, description))
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def create_area(lab_id: int, name: str, x1: float, y1: float, x2: float,
+                y2: float, required_ppe: list) -> int:
+    """
+    新建区域并写入其 PPE 要求，返回新区域 id。
+    required_ppe 为该区域要求的 PPE 业务类别列表（如 ["mask","gloves"]）。
+    lab_id 不存在时抛出 sqlite3.IntegrityError（外键约束）。
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
+            (lab_id, name, x1, y1, x2, y2))
+        area_id = int(cur.lastrowid)
+        for ppe in required_ppe:
+            conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
+                         " VALUES(?,?,1)", (area_id, ppe))
+        conn.commit()
+        return area_id
+    finally:
+        conn.close()
+
+
+def delete_area(area_id: int) -> None:
+    """
+    删除区域及其 PPE 规则（级联清理 safety_rules）。
+    幂等：area_id 不存在时不报错。
+    """
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM safety_rules WHERE area_id=?", (area_id,))
+        conn.execute("DELETE FROM areas WHERE id=?", (area_id,))
+        conn.commit()
+    finally:
+        conn.close()
