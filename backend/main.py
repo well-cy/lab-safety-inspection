@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import database as db
+from backend import export as export_api
 from rule_engine.engine import SEVERITY_NONE
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,6 +68,10 @@ def startup():
     db.init_db(seed=True)
 
 
+# ---------- 导出功能（独立模块 backend/export.py） ----------
+app.include_router(export_api.router)
+
+
 # ---------- 静态资源 ----------
 app.mount("/static", StaticFiles(directory=ROOT / "backend" / "static"), name="static")
 app.mount("/media", StaticFiles(directory=ROOT / "outputs"), name="media")
@@ -106,13 +111,21 @@ def statistics():
 @app.get("/api/violations")
 def violations(vtype: str | None = None, severity: str | None = None,
                date: str | None = None,
+               date_from: str | None = None, date_to: str | None = None,
+               sort: str = "id", order: str = "desc",
                limit: int = Query(200, ge=1, le=1000),
                offset: int = Query(0, ge=0)):
     rows = db.query_violations(vtype=vtype, severity=severity, date_str=date,
+                               date_from=date_from, date_to=date_to,
+                               sort=sort, order=order,
                                limit=limit, offset=offset)
+    total_count = db.count_violations(vtype=vtype, severity=severity,
+                                      date_str=date, date_from=date_from,
+                                      date_to=date_to)
     for r in rows:
         r["screenshot_url"] = f"/media/screenshots/{r['screenshot_path']}" if r.get("screenshot_path") else ""
-    return {"total": len(rows), "items": rows}
+    # total 保持契约原语义「本次返回条数」；total_count 为符合筛选条件的总条数（新增字段）
+    return {"total": len(rows), "total_count": total_count, "items": rows}
 
 
 # ---------- 检测：图片 ----------

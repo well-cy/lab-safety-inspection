@@ -6,3 +6,5 @@ uvicorn>=0.29
 python-multipart>=0.0.9
 opencv-python>=4.9
 numpy
+# 违规记录导出为 Excel（.xlsx）使用；仅导出功能需要
+openpyxl>=3.1.0

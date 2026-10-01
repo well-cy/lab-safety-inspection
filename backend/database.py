@@ -178,31 +178,81 @@ def save_event_dicts(record_id, lab_id, event_dicts: list):
     conn.close()
 
 
-def query_violations(vtype=None, severity=None, date_str=None, lab_id=None,
-                     limit=200, offset=0):
-    sql = ("SELECT v.*, l.name AS lab_name FROM violation_events v"
-           " LEFT JOIN laboratories l ON v.lab_id = l.id WHERE 1=1")
+# 违规查询允许的排序字段（白名单，拼接进 SQL 前校验，避免注入）
+VIOLATION_SORT_FIELDS = {
+    "id": "v.id",
+    "created_at": "v.created_at",
+    "severity": "v.severity",
+    "area_name": "v.area_name",
+}
+
+
+def _violation_where(vtype=None, severity=None, date_str=None, lab_id=None,
+                     date_from=None, date_to=None):
+    """
+    构造违规查询的 WHERE 片段与参数。
+    query_violations / count_violations / 导出功能共用，保证筛选口径一致。
+    """
+    where = " WHERE 1=1"
     args = []
     if vtype:
-        sql += " AND v.violation_types LIKE ?"
+        where += " AND v.violation_types LIKE ?"
         args.append(f"%{vtype}%")
     if severity:
-        sql += " AND v.severity = ?"
+        where += " AND v.severity = ?"
         args.append(severity)
     else:
-        sql += " AND v.severity != '正常'"  # 默认隐藏正常评估记录
+        where += " AND v.severity != '正常'"  # 默认隐藏正常评估记录
     if date_str:
-        sql += " AND date(v.created_at) = ?"
+        where += " AND date(v.created_at) = ?"
         args.append(date_str)
+    if date_from:
+        where += " AND date(v.created_at) >= ?"
+        args.append(date_from)
+    if date_to:
+        where += " AND date(v.created_at) <= ?"
+        args.append(date_to)
     if lab_id:
-        sql += " AND v.lab_id = ?"
+        where += " AND v.lab_id = ?"
         args.append(lab_id)
-    sql += " ORDER BY v.id DESC LIMIT ? OFFSET ?"
-    args += [limit, offset]
+    return where, args
+
+
+def query_violations(vtype=None, severity=None, date_str=None, lab_id=None,
+                     limit=200, offset=0, date_from=None, date_to=None,
+                     sort="id", order="desc"):
+    """
+    查询违规记录。
+
+    新增参数均为可选，原有调用方式完全不变（向后兼容）：
+      date_from / date_to : 日期区间过滤（含端点，YYYY-MM-DD）
+      sort                : id | created_at | severity | area_name（白名单）
+      order               : asc | desc
+    """
+    where, args = _violation_where(vtype, severity, date_str, lab_id,
+                                   date_from, date_to)
+    col = VIOLATION_SORT_FIELDS.get(str(sort).lower(), "v.id")
+    direction = "ASC" if str(order).lower() == "asc" else "DESC"
+    sql = ("SELECT v.*, l.name AS lab_name FROM violation_events v"
+           " LEFT JOIN laboratories l ON v.lab_id = l.id"
+           f"{where} ORDER BY {col} {direction}, v.id DESC LIMIT ? OFFSET ?")
+    args = args + [limit, offset]
     conn = get_conn()
     rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
     conn.close()
     return rows
+
+
+def count_violations(vtype=None, severity=None, date_str=None, lab_id=None,
+                     date_from=None, date_to=None) -> int:
+    """按与 query_violations 相同的筛选条件统计总条数（用于分页 total_count）"""
+    where, args = _violation_where(vtype, severity, date_str, lab_id,
+                                   date_from, date_to)
+    conn = get_conn()
+    row = conn.execute(
+        f"SELECT COUNT(*) AS c FROM violation_events v{where}", args).fetchone()
+    conn.close()
+    return int(row["c"])
 
 
 def dashboard_stats():
