@@ -121,6 +121,15 @@ def load_areas(lab_id: int):
     return areas
 
 
+def lab_exists(lab_id: int) -> bool:
+    """判断实验室是否存在（用于 API 参数校验，把外键崩溃转成 4xx）"""
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM laboratories WHERE id=?",
+                       (lab_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
 def save_detection_record(lab_id, source_type, source_name, person_count,
                           violation_count, normal_count, process_time_ms) -> int:
     conn = get_conn()

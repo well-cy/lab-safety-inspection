@@ -16,6 +16,7 @@ API 概览：
   DELETE /api/settings/area   删除区域
 """
 import shutil
+import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,14 @@ for d in (UPLOAD_DIR, OUT_IMG_DIR, OUT_VID_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="实验室安全智能巡检与违规预警系统", version="0.1.0-MVP")
+
+# 可作为区域 PPE 要求的业务类别（person 是检测主体，不是 PPE）
+ALLOWED_PPE = ["mask", "gloves", "lab_coat", "goggles", "helmet"]
+
+
+def bad_request(msg: str) -> JSONResponse:
+    """统一 4xx 响应：{"error": "..."}（与前端 apiFetch 的错误解析格式一致）"""
+    return JSONResponse({"error": msg}, status_code=400)
 
 _detector = None
 _pipeline = None
@@ -96,7 +105,9 @@ def statistics():
 
 @app.get("/api/violations")
 def violations(vtype: str | None = None, severity: str | None = None,
-               date: str | None = None, limit: int = 200, offset: int = 0):
+               date: str | None = None,
+               limit: int = Query(200, ge=1, le=1000),
+               offset: int = Query(0, ge=0)):
     rows = db.query_violations(vtype=vtype, severity=severity, date_str=date,
                                limit=limit, offset=offset)
     for r in rows:
@@ -107,17 +118,28 @@ def violations(vtype: str | None = None, severity: str | None = None,
 # ---------- 检测：图片 ----------
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
+    # 参数校验：非法输入返回 4xx，而不是 500
+    if not db.lab_exists(lab_id):
+        return bad_request(f"实验室不存在: lab_id={lab_id}")
+
     pipeline = get_pipeline()
     suffix = Path(file.filename or "upload.jpg").suffix or ".jpg"
     save_path = UPLOAD_DIR / f"img_{uuid.uuid4().hex[:8]}{suffix}"
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    if save_path.stat().st_size == 0:
+        save_path.unlink(missing_ok=True)
+        return bad_request("上传内容为空，请选择有效的图片文件")
 
     areas = db.load_areas(lab_id)
     from video.processor import process_image
     out_name = f"annotated_{save_path.stem}.jpg"
-    result = process_image(pipeline, save_path, areas,
-                           save_path=OUT_IMG_DIR / out_name)
+    try:
+        result = process_image(pipeline, save_path, areas,
+                               save_path=OUT_IMG_DIR / out_name)
+    except ValueError as exc:
+        # 非图片 / 损坏文件等 → 400（原先未捕获会变成 500）
+        return bad_request(f"图片无法读取或格式不支持：{exc}")
 
     persons = result["person_states"]
     events = result["events"]
@@ -153,17 +175,31 @@ async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
 @app.post("/api/detect/video")
 async def detect_video(file: UploadFile = File(...), lab_id: int = Form(1),
                        stride: int = Form(2)):
+    # 参数校验：非法输入返回 4xx，而不是 500
+    if not db.lab_exists(lab_id):
+        return bad_request(f"实验室不存在: lab_id={lab_id}")
+    if stride < 1:
+        # stride=0 会让 processor 里的 n_frames % stride 抛 ZeroDivisionError
+        return bad_request(f"stride 必须为 ≥1 的整数，当前为 {stride}")
+
     pipeline = get_pipeline()
     suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
     save_path = UPLOAD_DIR / f"vid_{uuid.uuid4().hex[:8]}{suffix}"
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    if save_path.stat().st_size == 0:
+        save_path.unlink(missing_ok=True)
+        return bad_request("上传内容为空，请选择有效的视频文件")
 
     areas = db.load_areas(lab_id)
     from video.processor import process_video
     out_name = f"annotated_{save_path.stem}.mp4"
-    result = process_video(pipeline, save_path, areas,
-                           OUT_VID_DIR / out_name, stride=stride)
+    try:
+        result = process_video(pipeline, save_path, areas,
+                               OUT_VID_DIR / out_name, stride=stride)
+    except ValueError as exc:
+        # 非视频 / 损坏文件等 → 400（原先未捕获会变成 500）
+        return bad_request(f"视频无法打开或格式不支持：{exc}")
 
     events = result["events"]
     record_id = db.save_detection_record(
@@ -206,8 +242,9 @@ async def create_lab(name: str = Form(...), description: str = Form("")):
         conn.execute("INSERT INTO laboratories(name, description) VALUES(?,?)",
                      (name, description))
         conn.commit()
-    except Exception:
-        return JSONResponse({"error": "实验室名称已存在"}, status_code=400)
+    except sqlite3.IntegrityError:
+        # 只捕获唯一约束冲突；其他异常（如磁盘故障）应保持 5xx 以暴露问题
+        return bad_request("实验室名称已存在")
     finally:
         conn.close()
     return {"ok": True}
@@ -218,12 +255,27 @@ async def create_area(lab_id: int = Form(...), name: str = Form(...),
                       x1: float = Form(...), y1: float = Form(...),
                       x2: float = Form(...), y2: float = Form(...),
                       required_ppe: str = Form("mask,gloves,lab_coat")):
+    # ---- 参数校验（原先缺失，非法输入会触发外键约束 500）----
+    if not db.lab_exists(lab_id):
+        return bad_request(f"实验室不存在: lab_id={lab_id}")
+    for nm, v in (("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)):
+        if not 0.0 <= v <= 1.0:
+            return bad_request(f"区域坐标 {nm}={v} 越界，必须为 0~1 的归一化值")
+    if x1 >= x2 or y1 >= y2:
+        return bad_request("区域坐标无效：要求 x1 < x2 且 y1 < y2，"
+                           f"当前 x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+    ppe_list = [s.strip() for s in required_ppe.split(",") if s.strip()]
+    invalid = [p for p in ppe_list if p not in ALLOWED_PPE]
+    if invalid:
+        return bad_request(f"不支持的 PPE 类型: {','.join(invalid)}；"
+                           f"可选值: {','.join(ALLOWED_PPE)}")
+
     conn = db.get_conn()
     cur = conn.execute(
         "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
         (lab_id, name, x1, y1, x2, y2))
     area_id = cur.lastrowid
-    for ppe in [s.strip() for s in required_ppe.split(",") if s.strip()]:
+    for ppe in ppe_list:
         conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
                      " VALUES(?,?,1)", (area_id, ppe))
     conn.commit()
