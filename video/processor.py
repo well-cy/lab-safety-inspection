@@ -117,12 +117,16 @@ def process_image(pipeline: InspectionPipeline, image_path, areas,
     annotated = draw_annotations(img.copy(), states, events, areas)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    # 违规截图
-    for ev in events:
-        if ev.is_violation:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            rel = f"img_{ts}_p{ev.person_id}.jpg"
-            cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
+    # 违规截图：整帧标注图对本次检测内的所有违规人员是同一张，
+    # 因此只落一次盘并复用文件名。
+    # 原实现为每个违规人员各写一份（文件名带 _p{id}），实测一次 7 人检测
+    # 会产生 6 张内容完全相同的图片，纯属磁盘浪费。
+    violating = [ev for ev in events if ev.is_violation]
+    if violating:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        rel = f"img_{ts}.jpg"
+        cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
+        for ev in violating:
             ev.screenshot = rel
     if save_path:
         cv2.imwrite(str(save_path), annotated)

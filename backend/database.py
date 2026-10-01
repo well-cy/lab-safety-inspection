@@ -255,6 +255,36 @@ def count_violations(vtype=None, severity=None, date_str=None, lab_id=None,
     return int(row["c"])
 
 
+def _count_violation_types(conn, where: str, args: list,
+                           limit: int | None = None) -> list:
+    """
+    按「单个违规类型」统计数量。
+
+    violation_events.violation_types 存的是逗号分隔字符串（如
+    "未佩戴手套,未穿实验服,未佩戴口罩"）。若直接 `GROUP BY violation_types`
+    整串分组，多类型违规会被当成一个独立类别，统计图表就会出现
+    "未佩戴手套,未穿实验服,未佩戴口罩" 这种无意义的分类，
+    与 INTERFACE_CONTRACT 6.3 示例（每项为**单个**类型）不符。
+
+    因此取出后在 Python 侧拆分计数。排序按（次数降序, 类型名升序），
+    保证结果稳定、可重复比对。
+
+    where 需自带前导空格，如 " WHERE severity != '正常'"。
+    """
+    counts: dict[str, int] = {}
+    for row in conn.execute(
+            f"SELECT violation_types FROM violation_events{where}",
+            args).fetchall():
+        for item in str(row["violation_types"]).split(","):
+            item = item.strip()
+            if item:
+                counts[item] = counts.get(item, 0) + 1
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    if limit is not None:
+        items = items[:limit]
+    return [{"t": k, "c": v} for k, v in items]
+
+
 def dashboard_stats():
     """首页统计：今日检测次数、违规次数、正常次数、违规率、违规类型分布"""
     today = date.today().isoformat()
@@ -269,10 +299,10 @@ def dashboard_stats():
     normal = conn.execute(
         "SELECT COUNT(*) c FROM violation_events WHERE date(created_at)=?"
         " AND severity='正常'", (today,)).fetchone()["c"]
-    by_type = [dict(r) for r in conn.execute(
-        "SELECT violation_types t, COUNT(*) c FROM violation_events"
-        " WHERE date(created_at)=? AND severity != '正常'"
-        " GROUP BY violation_types ORDER BY c DESC LIMIT 10", (today,)).fetchall()]
+    # 按单个违规类型统计（多类型违规会分别计入各自类型，而非合并成一个类别）
+    by_type = _count_violation_types(
+        conn, " WHERE date(created_at)=? AND severity != '正常'",
+        [today], limit=10)
     by_day = [dict(r) for r in conn.execute(
         "SELECT date(created_at) d, COUNT(*) c FROM violation_events"
         " WHERE severity != '正常' AND created_at >= date('now','-6 days','localtime')"
@@ -294,12 +324,17 @@ def dashboard_stats():
 def statistics():
     """统计页数据：每日违规、各类违规数量、正常/违规比例"""
     conn = get_conn()
+    # 取「最近 30 天」：必须先按日期倒序取前 30 条，再反转回升序。
+    # 原实现 ORDER BY d ASC LIMIT 30 取到的是**最早**的 30 天 ——
+    # 实测造 40 天数据时返回 08-24~09-22，完全不含今天（10-02）；
+    # 即数据一旦超过 30 天，统计页就会显示过时区间并丢失最新数据。
     by_day = [dict(r) for r in conn.execute(
         "SELECT date(created_at) d, COUNT(*) c FROM violation_events"
-        " WHERE severity != '正常' GROUP BY d ORDER BY d LIMIT 30").fetchall()]
-    by_type = [dict(r) for r in conn.execute(
-        "SELECT violation_types t, COUNT(*) c FROM violation_events"
-        " WHERE severity != '正常' GROUP BY violation_types ORDER BY c DESC").fetchall()]
+        " WHERE severity != '正常' GROUP BY d ORDER BY d DESC LIMIT 30").fetchall()]
+    by_day.reverse()   # 反转回时间升序，便于前端直接按顺序绘制折线
+
+    # 按单个违规类型统计（同 dashboard_stats，避免多类型记录被合并成一个类别）
+    by_type = _count_violation_types(conn, " WHERE severity != '正常'", [])
     by_severity = [dict(r) for r in conn.execute(
         "SELECT severity s, COUNT(*) c FROM violation_events GROUP BY severity").fetchall()]
     conn.close()

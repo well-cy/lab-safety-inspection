@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import database as db
 from backend import export as export_api
+from backend.validators import find_invalid_date
 from rule_engine.engine import SEVERITY_NONE
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,20 +47,45 @@ def bad_request(msg: str) -> JSONResponse:
     """统一 4xx 响应：{"error": "..."}（与前端 apiFetch 的错误解析格式一致）"""
     return JSONResponse({"error": msg}, status_code=400)
 
+class ModelUnavailableError(RuntimeError):
+    """模型权重缺失或加载失败（模型不入 git 仓库，新成员首次运行常遇到）"""
+
+
 _detector = None
 _pipeline = None
+
+MODEL_PATH = ROOT / "ai" / "model" / "sh17_yolov8s.pt"
+MODEL_DOWNLOAD_HINT = (
+    "模型权重不随 git 仓库分发，获取方式见 README「如何运行」第 3 节：\n"
+    "  curl -L -o ai/model/sh17_yolov8s.pt "
+    "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt\n"
+    "（国内网络需加代理：curl 追加 --proxy http://127.0.0.1:7890）"
+)
+
+
+@app.exception_handler(ModelUnavailableError)
+def _model_unavailable_handler(request, exc):
+    """模型不可用时返回 503 + 可读提示，而不是 500 + 原始堆栈"""
+    return JSONResponse({"error": str(exc)}, status_code=503)
 
 
 def get_pipeline():
     """懒加载模型管线（首次请求时加载，避免服务启动卡顿）"""
     global _detector, _pipeline
     if _pipeline is None:
-        from ai.detector import PPEDetector
-        from video.processor import InspectionPipeline
-        _detector = PPEDetector(ROOT / "ai" / "model" / "sh17_yolov8s.pt")
-        from rule_engine.engine import SafetyRuleEngine
-        _pipeline = InspectionPipeline(
-            detector=_detector, engine=SafetyRuleEngine())
+        if not MODEL_PATH.exists():
+            raise ModelUnavailableError(
+                f"模型文件不存在：{MODEL_PATH}\n{MODEL_DOWNLOAD_HINT}")
+        try:
+            from ai.detector import PPEDetector
+            from video.processor import InspectionPipeline
+            _detector = PPEDetector(MODEL_PATH)
+            from rule_engine.engine import SafetyRuleEngine
+            _pipeline = InspectionPipeline(
+                detector=_detector, engine=SafetyRuleEngine())
+        except OSError as exc:
+            raise ModelUnavailableError(
+                f"模型加载失败：{exc}\n{MODEL_DOWNLOAD_HINT}") from exc
     return _pipeline
 
 
@@ -112,9 +138,22 @@ def statistics():
 def violations(vtype: str | None = None, severity: str | None = None,
                date: str | None = None,
                date_from: str | None = None, date_to: str | None = None,
-               sort: str = "id", order: str = "desc",
+               sort: str = Query("id",
+                                 pattern="^(id|created_at|severity|area_name)$"),
+               order: str = Query("desc", pattern="^(asc|desc)$"),
                limit: int = Query(200, ge=1, le=1000),
                offset: int = Query(0, ge=0)):
+    # 参数校验：与 /api/export/violations 保持同一口径。
+    # 原实现完全不校验日期，date_to=2026-99-99 这类 typo 会被静默忽略并返回
+    # 全表数据，用户会误以为"筛选生效了"，实际拿到的是全部记录。
+    invalid = find_invalid_date(("date", date), ("date_from", date_from),
+                                ("date_to", date_to))
+    if invalid:
+        return bad_request(f"{invalid[0]} 不是有效日期：{invalid[1]}"
+                           f"（应为 YYYY-MM-DD）")
+    if date_from and date_to and date_from > date_to:
+        return bad_request(f"日期区间无效：起始 {date_from} 晚于结束 {date_to}")
+
     rows = db.query_violations(vtype=vtype, severity=severity, date_str=date,
                                date_from=date_from, date_to=date_to,
                                sort=sort, order=order,

@@ -18,13 +18,13 @@
 """
 import csv
 import io
-import re
 from datetime import datetime
 
 from fastapi import APIRouter, Query, Response
 from fastapi.responses import JSONResponse
 
 from backend import database as db
+from backend.validators import is_valid_date
 
 router = APIRouter(prefix="/api/export", tags=["违规记录导出"])
 
@@ -46,26 +46,6 @@ MAX_EXPORT_ROWS = 50000
 
 XLSX_MEDIA_TYPE = ("application/vnd.openxmlformats-officedocument"
                    ".spreadsheetml.sheet")
-
-# 日期参数格式
-DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
-
-
-def _is_valid_date(value: str | None) -> bool:
-    """
-    校验是否为真实存在的日历日期。
-    仅靠正则不够：'2026-13-99' 位数合法但不是有效日期，需 strptime 兜底。
-    """
-    if not value:
-        return True
-    if not re.match(DATE_PATTERN, value):
-        return False
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return True
-    except ValueError:
-        return False
-
 
 def _build_csv(rows: list) -> bytes:
     """生成 CSV 字节流（utf-8-sig 带 BOM，Excel 打开中文不乱码）"""
@@ -131,7 +111,7 @@ def export_violations(
 
     # 日期校验：格式与真实性都检查，统一返回 400 + error 字段
     for label, value in (("date_from", date_from), ("date_to", date_to)):
-        if not _is_valid_date(value):
+        if not is_valid_date(value):
             return JSONResponse(
                 {"error": f"{label} 不是有效日期：{value}（应为 YYYY-MM-DD）"},
                 status_code=400)
