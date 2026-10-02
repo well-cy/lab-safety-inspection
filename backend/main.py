@@ -29,7 +29,7 @@ from backend import database as db
 from backend import export as export_api
 from backend import maintenance
 from backend.config import config
-from backend.tasks import TaskManager
+from backend.tasks import QueueFull, TaskManager
 from backend.validators import find_invalid_date
 from rule_engine.engine import SEVERITY_NONE
 
@@ -53,7 +53,8 @@ def bad_request(msg: str) -> JSONResponse:
 
 # 视频后台任务管理器：用线程池执行阻塞的视频处理，避免占死事件循环。
 # worker 数由 LABSAFETY_VIDEO_MAX_WORKERS 控制（默认 1，多余任务排队等待）。
-task_manager = TaskManager(max_workers=config.VIDEO_MAX_WORKERS)
+task_manager = TaskManager(max_workers=config.VIDEO_MAX_WORKERS,
+                           max_pending=config.MAX_PENDING_TASKS)
 
 
 class ModelUnavailableError(RuntimeError):
@@ -268,8 +269,11 @@ def run_video_job(video_path: Path, lab_id: int, source_name: str, stride: int,
                            OUT_VID_DIR / out_name, stride=stride,
                            progress_cb=progress_cb)
     events = result["events"]
+    # 人数取"单帧最大人数"：原实现恒填 0，导致 detection_records 中
+    # 所有视频记录的 person_count 都是 0，库内数据不准确
+    person_count = int(result.get("max_person_count", 0))
     record_id = db.save_detection_record(
-        lab_id, "video", source_name, 0, len(events), 0,
+        lab_id, "video", source_name, person_count, len(events), 0,
         result["elapsed_s"] * 1000)
     db.save_event_dicts(record_id, lab_id, events)
     return {
@@ -353,7 +357,13 @@ def detect_video_async(file: UploadFile = File(...),
         return run_video_job(video_path, lab_id, source_name, stride,
                              progress_cb=progress_cb)
 
-    task_id = task_manager.submit("video_detect", work)
+    try:
+        task_id = task_manager.submit("video_detect", work)
+    except QueueFull as exc:
+        # 队列已满：删掉刚落盘的临时文件，避免白白占用磁盘
+        save_path.unlink(missing_ok=True)
+        return JSONResponse({"error": str(exc)}, status_code=429)
+
     return {
         "task_id": task_id,
         "status": "pending",

@@ -190,6 +190,24 @@ VIOLATION_SORT_FIELDS = {
 }
 
 
+def _escape_like(value: str) -> str:
+    """
+    转义 SQL LIKE 的通配符，使用户输入按**字面含义**匹配。
+
+    问题背景：违规类型筛选用的是 `LIKE '%' || ? || '%'`，而 `%` 与 `_`
+    在 LIKE 中有特殊含义。实测传入 `vtype=%` 时会返回**全部**记录
+    （筛选形同虚设），传入 `vtype=_` 同样返回全部 —— 用户会以为筛选生效，
+    实际拿到的是全量数据。
+
+    转义顺序很重要：必须先转义反斜杠本身，否则会把后面新加的反斜杠二次转义。
+    调用方需配合 `LIKE ? ESCAPE '\\'` 使用。
+    """
+    return (str(value)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_"))
+
+
 def _violation_where(vtype=None, severity=None, date_str=None, lab_id=None,
                      date_from=None, date_to=None):
     """
@@ -199,8 +217,8 @@ def _violation_where(vtype=None, severity=None, date_str=None, lab_id=None,
     where = " WHERE 1=1"
     args = []
     if vtype:
-        where += " AND v.violation_types LIKE ?"
-        args.append(f"%{vtype}%")
+        where += " AND v.violation_types LIKE ? ESCAPE '\\'"
+        args.append(f"%{_escape_like(vtype)}%")
     if severity:
         where += " AND v.severity = ?"
         args.append(severity)

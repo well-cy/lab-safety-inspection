@@ -118,6 +118,10 @@ class Config:
         # 默认 1：视频处理是 CPU/GPU 密集型，并发跑只会互相拖慢；
         # 多余任务排队等待，避免把机器压垮。
         self.VIDEO_MAX_WORKERS = _env_int("VIDEO_MAX_WORKERS", 1)
+        # 后台任务队列的待处理上限（含排队中与处理中）。
+        # 防止无限提交同时耗尽内存（任务对象）与磁盘（每个视频任务在提交时
+        # 就已落盘一份上传文件），超限时接口返回 429。
+        self.MAX_PENDING_TASKS = _env_int("MAX_PENDING_TASKS", 20)
 
         # 运行期文件清理：默认保留最近 N 天（超出后由清理接口删除）
         self.CLEANUP_KEEP_DAYS = _env_int("CLEANUP_KEEP_DAYS", 7)
@@ -163,6 +167,7 @@ class Config:
             "video_stride": self.VIDEO_STRIDE,
             "violation_cooldown_s": self.VIOLATION_COOLDOWN_S,
             "video_max_workers": self.VIDEO_MAX_WORKERS,
+            "max_pending_tasks": self.MAX_PENDING_TASKS,
             "cleanup_keep_days": self.CLEANUP_KEEP_DAYS,
             "minor_threshold": self.MINOR_THRESHOLD,
             "default_lab_id": self.DEFAULT_LAB_ID,

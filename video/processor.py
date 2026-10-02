@@ -185,6 +185,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     last_states, last_events, last_dets = [], [], []
     last_result = None            # 最近一次检测的原始帧缓存（避免重复推理绘制错位）
     n_frames = n_infer = 0
+    max_persons = 0               # 单帧出现过的最大人数（供落库 person_count 使用）
     cooldown: dict[tuple, float] = {}   # (违规集合) -> 上次截图的视频时间
 
     while True:
@@ -199,6 +200,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
         if n_frames % stride == 1 or stride == 1:
             states, events, dets = pipeline.analyze_frame(frame, areas, frame_time)
             last_states, last_events, last_dets = states, events, dets
+            max_persons = max(max_persons, len(states))
             n_infer += 1
         else:
             # 复用上一帧结果（时间戳刷新）
@@ -233,6 +235,9 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     return {
         "total_frames": n_frames,
         "inferred_frames": n_infer,
+        # 单帧最大人数：视频响应体不对外暴露该字段，但落库时要用它填
+        # detection_records.person_count（原实现恒填 0，导致库里数据不准）
+        "max_person_count": max_persons,
         "video_fps": round(n_frames / elapsed, 1) if elapsed > 0 else 0,
         "elapsed_s": round(elapsed, 1),
         "events": [e.to_dict() for e in all_events],

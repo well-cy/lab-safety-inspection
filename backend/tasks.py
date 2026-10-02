@@ -35,6 +35,15 @@ STATUS_RUNNING = "running"     # 处理中
 STATUS_DONE = "done"           # 处理成功
 STATUS_FAILED = "failed"       # 处理失败（异常信息在 error 字段）
 
+
+class QueueFull(RuntimeError):
+    """
+    后台任务队列已满。
+
+    没有上限时，无限提交会同时耗尽内存（任务对象）与磁盘（每个视频任务在
+    提交时就已经落盘了一份上传文件）。因此设上限，由 API 层转成 429。
+    """
+
 # 进度回调签名：progress_cb(已处理帧数, 总帧数)
 ProgressCallback = Callable[[int, int], None]
 
@@ -93,10 +102,12 @@ class TaskManager:
     所有对任务字典的读写都在同一把锁下进行，worker 线程与请求线程共享它。
     """
 
-    def __init__(self, max_workers: int = 1, max_history: int = 100):
+    def __init__(self, max_workers: int = 1, max_history: int = 100,
+                 max_pending: int = 20):
         self._tasks: dict[str, Task] = {}
         self._lock = threading.Lock()
         self._max_history = max(1, int(max_history))
+        self._max_pending = max(1, int(max_pending))
         self._executor = ThreadPoolExecutor(
             max_workers=max(1, int(max_workers)),
             thread_name_prefix="labsafety-task")
@@ -110,9 +121,16 @@ class TaskManager:
         work: 可调用对象，签名 ``work(progress_cb) -> result``；
               work 内部应定期调用 ``progress_cb(已处理帧数, 总帧数)``。
               返回值若为 dict，会放进任务的 result 字段。
+        异常: 待处理任务数达到 max_pending 时抛 QueueFull（由 API 层转 429）。
         """
         task = Task(task_id=uuid.uuid4().hex[:12], kind=kind)
         with self._lock:
+            active = sum(1 for t in self._tasks.values()
+                         if t.status in (STATUS_PENDING, STATUS_RUNNING))
+            if active >= self._max_pending:
+                raise QueueFull(
+                    f"后台任务队列已满（{active}/{self._max_pending} 个待处理），"
+                    f"请稍后重试；可用 GET /api/tasks 查看进度")
             self._tasks[task.task_id] = task
             self._trim_locked()
         self._executor.submit(self._run, task.task_id, work)
@@ -159,6 +177,7 @@ class TaskManager:
             return {
                 "total": len(self._tasks),
                 "active": counts[STATUS_PENDING] + counts[STATUS_RUNNING],
+                "max_pending": self._max_pending,
                 **counts,
             }
 
