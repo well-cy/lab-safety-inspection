@@ -114,6 +114,10 @@ class Config:
         self.VIDEO_STRIDE = _env_int("VIDEO_STRIDE", 2)
         # 同一组违规的截图冷却时间（秒，视频内时间），用于事件去重
         self.VIOLATION_COOLDOWN_S = _env_float("VIOLATION_COOLDOWN_S", 10.0)
+        # 视频后台任务的并发 worker 数。
+        # 默认 1：视频处理是 CPU/GPU 密集型，并发跑只会互相拖慢；
+        # 多余任务排队等待，避免把机器压垮。
+        self.VIDEO_MAX_WORKERS = _env_int("VIDEO_MAX_WORKERS", 1)
 
         # ---------- 规则引擎 ----------
         # 缺失 PPE 数量 <= 该值判为「一般违规」，超过则「严重违规」
@@ -155,6 +159,7 @@ class Config:
             "device": self.DEVICE,
             "video_stride": self.VIDEO_STRIDE,
             "violation_cooldown_s": self.VIOLATION_COOLDOWN_S,
+            "video_max_workers": self.VIDEO_MAX_WORKERS,
             "minor_threshold": self.MINOR_THRESHOLD,
             "default_lab_id": self.DEFAULT_LAB_ID,
             "default_required_ppe": self.DEFAULT_REQUIRED_PPE,

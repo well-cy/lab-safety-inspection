@@ -146,12 +146,25 @@ def process_image(pipeline: InspectionPipeline, image_path, areas,
 
 # ---------------- 视频处理 ----------------
 
+def _report_progress(progress_cb, done: int, total: int) -> None:
+    """上报处理进度；进度回调本身出错不应中断检测，故吞掉异常。"""
+    if progress_cb is None:
+        return
+    try:
+        progress_cb(done, total)
+    except Exception:
+        pass
+
+
 def process_video(pipeline: InspectionPipeline, video_path, areas,
-                  output_path, stride=2, save_annotated=True) -> dict:
+                  output_path, stride=2, save_annotated=True,
+                  progress_cb=None) -> dict:
     """
     处理视频文件。
     stride: 检测帧间隔（每 stride 帧做一次 YOLO 推理，中间帧复用上一次结果，
             保证演示流畅同时提升处理速度）
+    progress_cb: 可选进度回调，签名 progress_cb(已处理帧数, 总帧数)；
+            供后台任务上报进度使用。同步调用时传 None 即可，行为与原来一致。
     运行结束后统计：总帧数、检测帧数、处理 FPS、违规事件（去重后）、标注视频路径。
     """
     t0 = time.perf_counter()
@@ -180,6 +193,9 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
             break
         n_frames += 1
         frame_time = n_frames / fps_in
+        # 每 5 帧上报一次进度，避免过于频繁地抢锁
+        if n_frames % 5 == 0:
+            _report_progress(progress_cb, n_frames, total)
         if n_frames % stride == 1 or stride == 1:
             states, events, dets = pipeline.analyze_frame(frame, areas, frame_time)
             last_states, last_events, last_dets = states, events, dets
@@ -212,6 +228,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     cap.release()
     if writer is not None:
         writer.release()
+    _report_progress(progress_cb, n_frames, total)   # 收尾再报一次，确保进度到 100%
     elapsed = time.perf_counter() - t0
     return {
         "total_frames": n_frames,

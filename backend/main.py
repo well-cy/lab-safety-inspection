@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import database as db
 from backend import export as export_api
 from backend.config import config
+from backend.tasks import TaskManager
 from backend.validators import find_invalid_date
 from rule_engine.engine import SEVERITY_NONE
 
@@ -47,6 +48,12 @@ ALLOWED_PPE = config.ALLOWED_PPE
 def bad_request(msg: str) -> JSONResponse:
     """统一 4xx 响应：{"error": "..."}（与前端 apiFetch 的错误解析格式一致）"""
     return JSONResponse({"error": msg}, status_code=400)
+
+
+# 视频后台任务管理器：用线程池执行阻塞的视频处理，避免占死事件循环。
+# worker 数由 LABSAFETY_VIDEO_MAX_WORKERS 控制（默认 1，多余任务排队等待）。
+task_manager = TaskManager(max_workers=config.VIDEO_MAX_WORKERS)
+
 
 class ModelUnavailableError(RuntimeError):
     """模型权重缺失或加载失败（模型不入 git 仓库，新成员首次运行常遇到）"""
@@ -175,9 +182,12 @@ def violations(vtype: str | None = None, severity: str | None = None,
 
 
 # ---------- 检测：图片 ----------
+# 注意：这里刻意用同步 def 而非 async def。
+# FastAPI 会把同步端点自动放到线程池执行，因此 YOLO 推理（阻塞式 CPU/GPU）
+# 不会占死事件循环 —— 检测进行中，其他接口仍能正常响应。
 @app.post("/api/detect/image")
-async def detect_image(file: UploadFile = File(...),
-                       lab_id: int = Form(config.DEFAULT_LAB_ID)):
+def detect_image(file: UploadFile = File(...),
+                 lab_id: int = Form(config.DEFAULT_LAB_ID)):
     # 参数校验：非法输入返回 4xx，而不是 500
     if not db.lab_exists(lab_id):
         return bad_request(f"实验室不存在: lab_id={lab_id}")
@@ -232,42 +242,35 @@ async def detect_image(file: UploadFile = File(...),
 
 
 # ---------- 检测：视频 ----------
-@app.post("/api/detect/video")
-async def detect_video(file: UploadFile = File(...),
-                       lab_id: int = Form(config.DEFAULT_LAB_ID),
-                       stride: int = Form(config.VIDEO_STRIDE)):
-    # 参数校验：非法输入返回 4xx，而不是 500
-    if not db.lab_exists(lab_id):
-        return bad_request(f"实验室不存在: lab_id={lab_id}")
-    if stride < 1:
-        # stride=0 会让 processor 里的 n_frames % stride 抛 ZeroDivisionError
-        return bad_request(f"stride 必须为 ≥1 的整数，当前为 {stride}")
-
-    pipeline = get_pipeline()
-    suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
-    save_path = UPLOAD_DIR / f"vid_{uuid.uuid4().hex[:8]}{suffix}"
+def _save_upload(file: UploadFile, prefix: str, default_suffix: str) -> Path:
+    """把上传文件落盘到临时上传目录，返回保存路径"""
+    suffix = Path(file.filename or f"upload{default_suffix}").suffix or default_suffix
+    save_path = UPLOAD_DIR / f"{prefix}_{uuid.uuid4().hex[:8]}{suffix}"
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    if save_path.stat().st_size == 0:
-        save_path.unlink(missing_ok=True)
-        return bad_request("上传内容为空，请选择有效的视频文件")
+    return save_path
 
+
+def run_video_job(video_path: Path, lab_id: int, source_name: str, stride: int,
+                  progress_cb=None) -> dict:
+    """
+    处理视频并落库，返回响应体所需字段。
+
+    同步端点与后台任务**共用**本函数，保证两条路径的处理与落库逻辑完全一致；
+    progress_cb 为 None 时行为与旧版完全相同。
+    """
+    pipeline = get_pipeline()
     areas = db.load_areas(lab_id)
     from video.processor import process_video
-    out_name = f"annotated_{save_path.stem}.mp4"
-    try:
-        result = process_video(pipeline, save_path, areas,
-                               OUT_VID_DIR / out_name, stride=stride)
-    except ValueError as exc:
-        # 非视频 / 损坏文件等 → 400（原先未捕获会变成 500）
-        return bad_request(f"视频无法打开或格式不支持：{exc}")
-
+    out_name = f"annotated_{video_path.stem}.mp4"
+    result = process_video(pipeline, video_path, areas,
+                           OUT_VID_DIR / out_name, stride=stride,
+                           progress_cb=progress_cb)
     events = result["events"]
     record_id = db.save_detection_record(
-        lab_id, "video", file.filename, 0, len(events), 0,
+        lab_id, "video", source_name, 0, len(events), 0,
         result["elapsed_s"] * 1000)
     db.save_event_dicts(record_id, lab_id, events)
-
     return {
         "record_id": record_id,
         "total_frames": result["total_frames"],
@@ -278,6 +281,105 @@ async def detect_video(file: UploadFile = File(...),
         "events": events,
         "output_video_url": f"/media/videos/{out_name}",
     }
+
+
+def _validate_video_params(lab_id: int, stride: int):
+    """视频端点共用的参数校验；非法时返回 4xx 响应，合法时返回 None"""
+    if not db.lab_exists(lab_id):
+        return bad_request(f"实验室不存在: lab_id={lab_id}")
+    if stride < 1:
+        # stride=0 会让 processor 里的 n_frames % stride 抛 ZeroDivisionError
+        return bad_request(f"stride 必须为 ≥1 的整数，当前为 {stride}")
+    return None
+
+
+# 注意：同步 def 让 FastAPI 把这段阻塞处理放到线程池执行，因此长视频处理期间
+# **其他接口仍然可用**。原先写成 async def 却做阻塞调用，会把事件循环占死，
+# 连 /api/dashboard 都打不开。
+@app.post("/api/detect/video")
+def detect_video(file: UploadFile = File(...),
+                 lab_id: int = Form(config.DEFAULT_LAB_ID),
+                 stride: int = Form(config.VIDEO_STRIDE)):
+    invalid = _validate_video_params(lab_id, stride)
+    if invalid is not None:
+        return invalid
+
+    # 先确认模型可用（缺失时由异常处理器返回 503），避免白存一个临时文件
+    get_pipeline()
+
+    save_path = _save_upload(file, "vid", ".mp4")
+    if save_path.stat().st_size == 0:
+        save_path.unlink(missing_ok=True)
+        return bad_request("上传内容为空，请选择有效的视频文件")
+
+    try:
+        return run_video_job(save_path, lab_id,
+                             file.filename or "upload.mp4", stride)
+    except ValueError as exc:
+        # 非视频 / 损坏文件等 → 400（原先未捕获会变成 500）
+        return bad_request(f"视频无法打开或格式不支持：{exc}")
+
+
+@app.post("/api/detect/video/async", status_code=202)
+def detect_video_async(file: UploadFile = File(...),
+                       lab_id: int = Form(config.DEFAULT_LAB_ID),
+                       stride: int = Form(config.VIDEO_STRIDE)):
+    """
+    提交视频检测**后台任务**，立即返回 task_id（HTTP 202）。
+
+    与同步端点 /api/detect/video 的差别：
+      - 不等待处理完成，请求耗时只取决于上传耗时
+      - 进度通过 GET /api/tasks/{task_id} 轮询（status / progress）
+      - 处理在线程池中进行，服务全程保持可用
+
+    同步端点保留不变，供短视频与脚本直接调用。
+    """
+    invalid = _validate_video_params(lab_id, stride)
+    if invalid is not None:
+        return invalid
+
+    save_path = _save_upload(file, "vid", ".mp4")
+    if save_path.stat().st_size == 0:
+        save_path.unlink(missing_ok=True)
+        return bad_request("上传内容为空，请选择有效的视频文件")
+
+    # 闭包捕获本次请求的参数；模型加载放在 worker 内，
+    # 这样提交请求能立刻返回，不被 5 秒的模型加载拖住
+    video_path = save_path
+    source_name = file.filename or "upload.mp4"
+
+    def work(progress_cb):
+        return run_video_job(video_path, lab_id, source_name, stride,
+                             progress_cb=progress_cb)
+
+    task_id = task_manager.submit("video_detect", work)
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "status_url": f"/api/tasks/{task_id}",
+        "message": "视频已提交后台处理，请轮询 status_url 获取进度",
+    }
+
+
+# ---------- 后台任务查询 ----------
+@app.get("/api/tasks")
+def list_tasks(limit: int = Query(20, ge=1, le=100)):
+    """列出最近的后台任务概览（不含 result，避免响应体过大）"""
+    items = []
+    for task in task_manager.list_recent(limit):
+        data = task.to_dict()
+        data.pop("result", None)
+        items.append(data)
+    return {"stats": task_manager.stats(), "items": items}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str):
+    """查询单个后台任务的进度与结果"""
+    task = task_manager.get(task_id)
+    if task is None:
+        return JSONResponse({"error": f"任务不存在: {task_id}"}, status_code=404)
+    return task.to_dict()
 
 
 # ---------- 设置 ----------
