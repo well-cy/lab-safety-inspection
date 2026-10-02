@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import database as db
 from backend import export as export_api
+from backend import maintenance
 from backend.config import config
 from backend.tasks import TaskManager
 from backend.validators import find_invalid_date
@@ -380,6 +381,42 @@ def get_task(task_id: str):
     if task is None:
         return JSONResponse({"error": f"任务不存在: {task_id}"}, status_code=404)
     return task.to_dict()
+
+
+# ---------- 存储维护（清理运行期文件） ----------
+@app.get("/api/maintenance/storage")
+def get_storage_report():
+    """统计运行期目录占用：上传暂存 / 标注图 / 标注视频 / 违规截图"""
+    return maintenance.storage_report()
+
+
+@app.post("/api/maintenance/cleanup")
+def cleanup_storage(
+    days: int = Query(config.CLEANUP_KEEP_DAYS, ge=0, le=3650,
+                      description="保留最近 N 天的文件"),
+    dry_run: bool = Query(True, description="true 表示只统计不删除（默认）"),
+    targets: str = Query("", description="逗号分隔；留空使用默认目标"
+                                         "（uploads,annotated,videos）"),
+):
+    """
+    清理运行期文件。
+
+    安全设计：
+      - 默认 dry_run=true，只统计不删除；确认无误后再传 dry_run=false
+      - 只删除修改时间早于「今天 - days 天」的文件
+      - 只在集中配置的那几个目录内操作，不会触碰其他路径
+      - **不删除数据库记录**，历史违规记录始终保留
+
+    注意：违规截图被 violation_events.screenshot_path 引用，默认**不清理**；
+    如需清理请显式传 targets=screenshots，届时"违规记录"页中已清理的截图
+    会显示为裂图。
+    """
+    target_list = [t.strip() for t in targets.split(",") if t.strip()] or None
+    try:
+        return maintenance.cleanup(keep_days=days, dry_run=dry_run,
+                                   targets=target_list)
+    except ValueError as exc:
+        return bad_request(str(exc))
 
 
 # ---------- 设置 ----------

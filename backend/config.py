@@ -119,6 +119,9 @@ class Config:
         # 多余任务排队等待，避免把机器压垮。
         self.VIDEO_MAX_WORKERS = _env_int("VIDEO_MAX_WORKERS", 1)
 
+        # 运行期文件清理：默认保留最近 N 天（超出后由清理接口删除）
+        self.CLEANUP_KEEP_DAYS = _env_int("CLEANUP_KEEP_DAYS", 7)
+
         # ---------- 规则引擎 ----------
         # 缺失 PPE 数量 <= 该值判为「一般违规」，超过则「严重违规」
         self.MINOR_THRESHOLD = _env_int("MINOR_THRESHOLD", 1)
@@ -160,6 +163,7 @@ class Config:
             "video_stride": self.VIDEO_STRIDE,
             "violation_cooldown_s": self.VIOLATION_COOLDOWN_S,
             "video_max_workers": self.VIDEO_MAX_WORKERS,
+            "cleanup_keep_days": self.CLEANUP_KEEP_DAYS,
             "minor_threshold": self.MINOR_THRESHOLD,
             "default_lab_id": self.DEFAULT_LAB_ID,
             "default_required_ppe": self.DEFAULT_REQUIRED_PPE,
