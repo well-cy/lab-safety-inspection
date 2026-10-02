@@ -198,6 +198,8 @@ def main() -> int:
     ap.add_argument("--one-per-family", action="store_true",
                     help="同一原始照片家族只留 1 张代表（按批次判断时用，人工量降到 1/N）")
     ap.add_argument("--start-index", type=int, default=1, help="编号起始（多批续编时用）")
+    ap.add_argument("--text-scale", type=float, default=1.0,
+                    help="底部文字/编号字号倍率（默认按缩略图边长自适应，看不清时加到 1.4~2.0）")
     ap.add_argument("--box-color", default="",
                     help="强制所有框统一颜色（RGB 逗号分隔，如 0,0,255=蓝）；默认按类别配色")
     args = ap.parse_args()
@@ -219,7 +221,17 @@ def main() -> int:
         return 1
 
     per = args.cols * args.rows
-    cell_w, cell_h = args.thumb + PAD * 2, args.thumb + BAR_H + PAD * 2
+    # 文字条高度随缩略图自适应，保证文字放大后不会被挤掉
+    bar_h = max(44, int(args.thumb * 0.30))
+    cell_w, cell_h = args.thumb + PAD * 2, args.thumb + bar_h + PAD * 2
+    # 字号基准：随缩略图大小自适应，再乘 --text-scale
+    base = max(0.46, args.thumb / 340.0) * args.text_scale
+    fs_name = base                      # 文件名
+    fs_flag = base * 0.86               # 问题标签
+    fs_badge = base * 1.7               # 编号徽标（要比正文更醒目）
+    th_name = 1 if fs_name < 0.6 else 2
+    th_badge = max(2, int(round(fs_badge * 3.2)))
+    bar_color = (245, 245, 245)
     index_lines, item_lines = [], []
     idx = args.start_index
     skipped, sheets = [], 0
@@ -242,9 +254,12 @@ def main() -> int:
                 full = img.copy()
                 hh, ww = full.shape[:2]
                 cv2.rectangle(full, (0, 0), (ww - 1, hh - 1), (0, 0, 0), 2)
-                cv2.rectangle(full, (6, 6), (6 + 34 * len(str(idx)) + 20, 62), (0, 0, 0), -1)
-                cv2.putText(full, str(idx), (16, 52), cv2.FONT_HERSHEY_SIMPLEX, 1.4,
-                            (255, 255, 255), 3)
+                fnum = 1.4 * max(1.0, args.text_scale)
+                box_w = int(20 + 34 * len(str(idx)) * max(1.0, args.text_scale))
+                cv2.rectangle(full, (6, 6), (6 + box_w, 16 + int(50 * max(1.0, args.text_scale))),
+                              (0, 0, 0), -1)
+                cv2.putText(full, str(idx), (16, 12 + int(40 * max(1.0, args.text_scale))),
+                            cv2.FONT_HERSHEY_SIMPLEX, fnum, (255, 255, 255), 3)
                 cv2.imencode(".jpg", full)[1].tofile(
                     str(out / "full" / f"{idx:03d}_{ip.stem[:50]}.jpg"))
 
@@ -255,19 +270,28 @@ def main() -> int:
             cv2.rectangle(cell, (x0, y0), (x0 + args.thumb - 1, y0 + args.thumb - 1),
                           (150, 150, 150), 1)
 
-            # 编号徽标
-            badge_w = 16 + 12 * len(str(idx))
-            cv2.rectangle(cell, (x0, y0), (x0 + badge_w, y0 + 26), (0, 0, 0), -1)
-            cv2.putText(cell, str(idx), (x0 + 8, y0 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                        (255, 255, 255), 2)
+            # 编号徽标（画在图内左上角，白字黑底）
+            badge_h = int(round(18 + fs_badge * 26))
+            badge_w = int(round(14 + fs_badge * 22 * max(1, len(str(idx)) - 1) + fs_badge * 20))
+            cv2.rectangle(cell, (x0, y0), (x0 + badge_w, y0 + badge_h), (0, 0, 0), -1)
+            cv2.putText(cell, str(idx), (x0 + 7, y0 + badge_h - int(badge_h * 0.24)),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs_badge, (255, 255, 255), th_badge)
 
-            # 底部文字：文件名 + 问题标签
-            ty = y0 + args.thumb + 20
-            cv2.putText(cell, clip_text(ip.stem, 30), (x0, ty), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.42, (30, 30, 30), 1)
+            # 底部文字条：白底 + 文件名 + 问题标签（整体画在图下方，不再压在图面上）
+            bar_top = y0 + args.thumb
+            bar_bot = bar_top + bar_h
+            cv2.rectangle(cell, (x0, bar_top), (x0 + args.thumb, bar_bot), bar_color, -1)
+            cv2.line(cell, (x0, bar_top), (x0 + args.thumb, bar_top), (170, 170, 170), 1)
+
+            # 文件名（首行，深灰）
+            ty = bar_top + int(max(12, fs_name * 24))
+            cv2.putText(cell, clip_text(ip.stem, 30), (x0 + 2, ty), cv2.FONT_HERSHEY_SIMPLEX,
+                        fs_name, (20, 20, 20), th_name)
+            # 问题标签（次行，红字）
             if flags:
-                cv2.putText(cell, clip_text(flags, 34), (x0, ty + 10), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.34, (0, 0, 230), 1)
+                ty2 = ty + int(max(11, fs_flag * 22))
+                cv2.putText(cell, clip_text(flags, 34), (x0 + 2, ty2), cv2.FONT_HERSHEY_SIMPLEX,
+                            fs_flag, (0, 0, 210), max(1, th_name))
 
             sy, sx = r * cell_h, c * cell_w
             sheet[sy:sy + cell_h, sx:sx + cell_w] = cell
