@@ -87,9 +87,13 @@ class InspectionPipeline:
     """巡检处理管线：封装 detector + matcher + roi + rule engine"""
 
     def __init__(self, detector: PPEDetector, engine: SafetyRuleEngine | None = None,
-                 screenshot_dir="outputs/screenshots"):
+                 screenshot_dir="outputs/screenshots", cooldown_s=None):
         self.detector = detector
         self.engine = engine or SafetyRuleEngine()
+        # 截图冷却时间：默认沿用模块常量；生产环境由 backend/config.py 注入，
+        # 使其可通过 LABSAFETY_VIOLATION_COOLDOWN_S 环境变量调整。
+        self.cooldown_s = (VIOLATION_COOLDOWN_S if cooldown_s is None
+                           else float(cooldown_s))
         root = Path(__file__).resolve().parent.parent
         self.screenshot_dir = root / screenshot_dir
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -193,7 +197,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
             if not ev.is_violation:
                 continue
             key = (ev.person_id, tuple(sorted(ev.missing_ppe)))
-            if frame_time - cooldown.get(key, -1e9) >= VIOLATION_COOLDOWN_S:
+            if frame_time - cooldown.get(key, -1e9) >= pipeline.cooldown_s:
                 cooldown[key] = frame_time
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 rel = f"vid_{ts}_p{ev.person_id}.jpg"

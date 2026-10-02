@@ -27,20 +27,21 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import database as db
 from backend import export as export_api
+from backend.config import config
 from backend.validators import find_invalid_date
 from rule_engine.engine import SEVERITY_NONE
 
-ROOT = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = ROOT / "data" / "test" / "uploads"
-OUT_IMG_DIR = ROOT / "outputs" / "annotated"
-OUT_VID_DIR = ROOT / "outputs" / "videos"
-for d in (UPLOAD_DIR, OUT_IMG_DIR, OUT_VID_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+# 路径与阈值统一来自 backend/config.py（支持 LABSAFETY_* 环境变量覆盖）
+ROOT = config.ROOT
+UPLOAD_DIR = config.UPLOAD_DIR
+OUT_IMG_DIR = config.ANNOTATED_DIR
+OUT_VID_DIR = config.VIDEO_DIR
+config.ensure_dirs()
 
 app = FastAPI(title="实验室安全智能巡检与违规预警系统", version="0.1.0-MVP")
 
 # 可作为区域 PPE 要求的业务类别（person 是检测主体，不是 PPE）
-ALLOWED_PPE = ["mask", "gloves", "lab_coat", "goggles", "helmet"]
+ALLOWED_PPE = config.ALLOWED_PPE
 
 
 def bad_request(msg: str) -> JSONResponse:
@@ -54,7 +55,7 @@ class ModelUnavailableError(RuntimeError):
 _detector = None
 _pipeline = None
 
-MODEL_PATH = ROOT / "ai" / "model" / "sh17_yolov8s.pt"
+MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
     "模型权重不随 git 仓库分发，获取方式见 README「如何运行」第 3 节：\n"
     "  curl -L -o ai/model/sh17_yolov8s.pt "
@@ -79,10 +80,16 @@ def get_pipeline():
         try:
             from ai.detector import PPEDetector
             from video.processor import InspectionPipeline
-            _detector = PPEDetector(MODEL_PATH)
             from rule_engine.engine import SafetyRuleEngine
+            # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
+            _detector = PPEDetector(MODEL_PATH,
+                                    conf_threshold=config.CONF_THRESHOLD,
+                                    device=config.DEVICE)
             _pipeline = InspectionPipeline(
-                detector=_detector, engine=SafetyRuleEngine())
+                detector=_detector,
+                engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
+                screenshot_dir=config.SCREENSHOT_DIR,
+                cooldown_s=config.VIOLATION_COOLDOWN_S)
         except OSError as exc:
             raise ModelUnavailableError(
                 f"模型加载失败：{exc}\n{MODEL_DOWNLOAD_HINT}") from exc
@@ -99,13 +106,13 @@ app.include_router(export_api.router)
 
 
 # ---------- 静态资源 ----------
-app.mount("/static", StaticFiles(directory=ROOT / "backend" / "static"), name="static")
-app.mount("/media", StaticFiles(directory=ROOT / "outputs"), name="media")
+app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+app.mount("/media", StaticFiles(directory=config.OUTPUTS_DIR), name="media")
 
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "backend" / "static" / "index.html")
+    return FileResponse(config.STATIC_DIR / "index.html")
 
 
 # ---------- 模型信息 ----------
@@ -169,7 +176,8 @@ def violations(vtype: str | None = None, severity: str | None = None,
 
 # ---------- 检测：图片 ----------
 @app.post("/api/detect/image")
-async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
+async def detect_image(file: UploadFile = File(...),
+                       lab_id: int = Form(config.DEFAULT_LAB_ID)):
     # 参数校验：非法输入返回 4xx，而不是 500
     if not db.lab_exists(lab_id):
         return bad_request(f"实验室不存在: lab_id={lab_id}")
@@ -225,8 +233,9 @@ async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
 
 # ---------- 检测：视频 ----------
 @app.post("/api/detect/video")
-async def detect_video(file: UploadFile = File(...), lab_id: int = Form(1),
-                       stride: int = Form(2)):
+async def detect_video(file: UploadFile = File(...),
+                       lab_id: int = Form(config.DEFAULT_LAB_ID),
+                       stride: int = Form(config.VIDEO_STRIDE)):
     # 参数校验：非法输入返回 4xx，而不是 500
     if not db.lab_exists(lab_id):
         return bad_request(f"实验室不存在: lab_id={lab_id}")
@@ -293,7 +302,7 @@ async def create_lab(name: str = Form(...), description: str = Form("")):
 async def create_area(lab_id: int = Form(...), name: str = Form(...),
                       x1: float = Form(...), y1: float = Form(...),
                       x2: float = Form(...), y2: float = Form(...),
-                      required_ppe: str = Form("mask,gloves,lab_coat")):
+                      required_ppe: str = Form(config.DEFAULT_REQUIRED_PPE)):
     # ---- 参数校验（原先缺失，非法输入会触发外键约束 500）----
     if not db.lab_exists(lab_id):
         return bad_request(f"实验室不存在: lab_id={lab_id}")

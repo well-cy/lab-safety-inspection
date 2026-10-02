@@ -13,8 +13,11 @@ import sqlite3
 from datetime import datetime, date
 from pathlib import Path
 
+from backend.config import config
+
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "backend" / "labsafety.db"
+# 数据库路径来自集中配置（支持 LABSAFETY_DB_PATH 环境变量覆盖）
+DB_PATH = config.DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS laboratories (
