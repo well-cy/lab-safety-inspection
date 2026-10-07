@@ -17,6 +17,7 @@ API 概览：
 """
 import shutil
 import sqlite3
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,7 @@ class ModelUnavailableError(RuntimeError):
 
 _detector = None
 _pipeline = None
+_pipeline_lock = threading.Lock()
 
 MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
@@ -82,26 +84,27 @@ def _model_unavailable_handler(request, exc):
 def get_pipeline():
     """懒加载模型管线（首次请求时加载，避免服务启动卡顿）"""
     global _detector, _pipeline
-    if _pipeline is None:
-        if not MODEL_PATH.exists():
-            raise ModelUnavailableError(
-                f"模型文件不存在：{MODEL_PATH}\n{MODEL_DOWNLOAD_HINT}")
-        try:
-            from ai.detector import PPEDetector
-            from video.processor import InspectionPipeline
-            from rule_engine.engine import SafetyRuleEngine
-            # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
-            _detector = PPEDetector(MODEL_PATH,
-                                    conf_threshold=config.CONF_THRESHOLD,
-                                    device=config.DEVICE)
-            _pipeline = InspectionPipeline(
-                detector=_detector,
-                engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
-                screenshot_dir=config.SCREENSHOT_DIR,
-                cooldown_s=config.VIOLATION_COOLDOWN_S)
-        except OSError as exc:
-            raise ModelUnavailableError(
-                f"模型加载失败：{exc}\n{MODEL_DOWNLOAD_HINT}") from exc
+    with _pipeline_lock:
+        if _pipeline is None:
+            if not MODEL_PATH.exists():
+                raise ModelUnavailableError(
+                    f"模型文件不存在：{MODEL_PATH}\n{MODEL_DOWNLOAD_HINT}")
+            try:
+                from ai.detector import PPEDetector
+                from video.processor import InspectionPipeline
+                from rule_engine.engine import SafetyRuleEngine
+                # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
+                _detector = PPEDetector(MODEL_PATH,
+                                        conf_threshold=config.CONF_THRESHOLD,
+                                        device=config.DEVICE)
+                _pipeline = InspectionPipeline(
+                    detector=_detector,
+                    engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
+                    screenshot_dir=config.SCREENSHOT_DIR,
+                    cooldown_s=config.VIOLATION_COOLDOWN_S)
+            except OSError as exc:
+                raise ModelUnavailableError(
+                    f"模型加载失败：{exc}\n{MODEL_DOWNLOAD_HINT}") from exc
     return _pipeline
 
 
@@ -116,6 +119,11 @@ app.include_router(export_api.router)
 
 # ---------- 静态资源 ----------
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+# 特定媒体路径必须先于 /media 挂载，保持外置目录下的 URL 契约。
+app.mount("/media/annotated", StaticFiles(directory=config.ANNOTATED_DIR), name="annotated")
+app.mount("/media/videos", StaticFiles(directory=config.VIDEO_DIR), name="videos")
+app.mount("/media/screenshots", StaticFiles(directory=config.SCREENSHOT_DIR), name="screenshots")
+config.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=config.OUTPUTS_DIR), name="media")
 
 

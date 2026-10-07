@@ -164,8 +164,8 @@ class TaskManager:
 
     def list_recent(self, limit: int = 20) -> list[Task]:
         with self._lock:
-            items = sorted(self._tasks.values(),
-                           key=lambda t: t.created_at, reverse=True)
+            # 字典保留提交顺序；展示时间只精确到秒，不能用于同秒任务排序。
+            items = list(reversed(self._tasks.values()))
             return items[:max(1, int(limit))]
 
     def stats(self) -> dict:
