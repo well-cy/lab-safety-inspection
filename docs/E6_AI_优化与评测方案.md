@@ -66,7 +66,7 @@ conf=0.35 ｜ imgsz=640 ｜ IoU@0.5 ｜ 11 点插值 AP@50 ｜ 预测走项目�
 | train 细分来源 | 图片 | 框 | mask | gloves | lab_coat | goggles | 场景判定 |
 |---|---:|---:|---:|---:|---:|---:|---|
 | ~穿戴演示-含白大褂(dataset1-C1) | 1,053 | 4,414 | 468 | 1,834 | 1,411 | 701 | 实验室✅（抽检证实） |
-| X-穿戴演示-无白大褂(dataset1-C2) | 867 | 2,890 | 1,103 | 1,108 | 336 | 343 | 待人工确认 |
+| X-穿戴演示-无白大褂(dataset1-C2) | 867 | 2,890 | 1,103 | 1,108 | 336 | 343 | ❌连体防护服/医院/防疫+商品图 |
 | X-手套商品图(dataset1-A) | 1,534 | 2,430 | 0 | 2,430 | 0 | 0 | ❌骑行/滑雪/工业手套、海绵 |
 | X-工业CCTV(ppes_*+ppedetect) | 1,392 | 2,067 | 34 | 1,861 | 35 | 137 | ❌工厂监控 |
 | X-护目镜网图(dataset1-B) | 1,318 | 1,654 | 0 | 0 | 0 | 1,654 | ❌gozluk 眼镜网/产品图 |
@@ -81,8 +81,38 @@ conf=0.35 ｜ imgsz=640 ｜ IoU@0.5 ｜ 11 点插值 AP@50 ｜ 预测走项目�
 - lab_coat 反而是三类里最干净的（84% 来自实验室）。
 
 **第二阶段因此修订为「先手术、后补数」**：
-1. **手术（待确认）**：把 9 个 X- 组全部移出 train/valid（不删，进 `data/_rejected/domain_audit_20261007/`，可整体移回），
-   保留 ~C1/C2 + labcoat_si + web_*，之后对保留池做「实验室场景」人工复核（分诊图版已出）；
+1. **手术（进行中）**：把 9 个 X- 组全部移出 train/valid（不删，进 `data/_rejected/domain_audit_20261007*/`，可整体移回），
+   保留 C1/C2 之外的实验室组，之后对保留池做「实验室场景」人工复核（分诊图版已出）；
+
+**手术执行进度**（工具 `tools/reject_by_list.py` / `tools/apply_surgery_20261007.py`，幂等，标签随图同移；环境对单进程文件操作量有限制，故分块续跑）：
+
+| 批次 | 组 | 文件 | 落盘目录 | 状态 |
+|---|---|---:|---|---|
+| 1 | X-穿戴演示-无白大褂(dataset1-C2) | 870（train 867 + valid 3） | `data/_rejected/domain_audit_20261007_c2/` | ✅ 2026-10-07 她回「支持移除」后执行 |
+| 2 | X-工业CCTV(ppes_* + ppedetect) | 3,014（train 1,392 + valid 1,622） | `data/_rejected/domain_audit_20261007_cctv/` | ✅ 2026-10-07 她回「同意手术」 |
+| 3 | X-手套商品图(dataset1-A) | 1,612（train 1,534 + valid 78） | `data/_rejected/domain_audit_20261007_ds1a/` | ✅ 同上 |
+| 4 | X-护目镜网图(dataset1-B) | 1,373（train 1,318 + valid 55） | `data/_rejected/domain_audit_20261007_ds1b/` | ✅ 同上 |
+| 5 | X-未归类/其他 | 224（train 217 + valid 7） | `data/_rejected/domain_audit_20261007_misc/` | ✅ 同上 |
+| 6 | X-眼镜网图(外部) | 185（train 149 + valid 36） | `data/_rejected/domain_audit_20261007_glasses/` | ✅ 同上 |
+| — | labcoat_si #42（时装风衣，她判「剔」） | 1 | `data/_rejected/lcsi_lc29_notlabcoat_20261007/` | ✅ 同上 |
+
+合计移出 **7,279 组（14,558 文件）**，全部只移动不删除，任一 tag 可用
+`tools/reject_by_list.py --tag <tag> --restore` 整体移回。执行报告：`data/domain_audit_20261007_c2_report.txt`。
+
+**valid 重建（2026-10-07，`tools/rebuild_valid_20261007.py`）**：手术后 valid 只剩 122 张（6.7%），
+从保留池按「整家族 + md5 稳定排序」补足 151 张（全为 size=1 家族），清单 `data/_valid_rebuild_20261007_list.txt`
+（`--restore` 一键回滚）。重建后 **train∩valid 家族交集 = 0**（同源整组划分，无跨 split 泄漏）。
+
+**手术+重建后 `data/lab_ppe`（实验室场景底座）**：
+
+| split | 图（含空标签负样本） | 框 | mask | gloves | lab_coat | goggles |
+|---|---:|---:|---:|---:|---:|---:|
+| train | 1,547（空标签 135） | 4,971 | 503 | 1,955 | 1,864 | 649 |
+| valid | 273（空标签 25） | 915 | 82 | 362 | 325 | 146 |
+| test | 732（**未动，红线**） | 584 | 59 | 122 | 37 | 366 |
+
+> mask 从 1,635 骤降到 503——C2/ds1a 等组是 mask 主源且多为防疫场景，与实验室"普通医用口罩"口径不符；
+> E6 第二阶段「补 mask」的紧迫性因此最高。goggles 也降到 649（63% 原框来自眼镜网图已移出）。
 2. **重建 valid**（必要时重建 lab_ppe 内部 test）：从保留池按同源整组划分，保证 valid 是实验室场景；
 3. **补数**（下表）在手术后的干净底座上进行，避免脏底座污染新数据。
 
