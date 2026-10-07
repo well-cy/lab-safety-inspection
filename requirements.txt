@@ -1,8 +1,33 @@
-ultralytics>=8.3.0
-torch>=2.5.0
-torchvision
-fastapi>=0.110
-uvicorn>=0.29
-python-multipart>=0.0.9
-opencv-python>=4.9
-numpy
+# ===============================================================
+# 依赖清单  |  基于计算机视觉的实验室安全智能巡检与违规预警系统
+# 最后更新：2026-10-02（任务7 交付物：最终依赖说明 + 版本锁定）
+#
+# 【锁定策略】—— 为什么用区间而不是 ==
+#   下界：保持项目原有下界不变。提高下界会强制已装好环境的成员升级，
+#         有破坏现有可运行环境的风险，而收益很小。
+#   上界：新增 `<下一个大版本` 限制，防止未来大版本不兼容导致
+#         "某天 pip install 之后突然跑不起来"。
+#
+#   不写 == 精确锁定的原因：torch / torchvision / opencv-python 的
+#   wheel 与平台强绑定（Windows+CUDA / macOS / Linux 各不相同），
+#   精确锁死会导致部分成员根本装不上。
+#   本机实测的精确版本见 test-reports/task07-06-dependencies.md。
+#
+# 【安装】见 README「如何运行」或 test-reports/task07-01-windows-runbook.md
+# ===============================================================
+
+# ---------- 检测核心 ----------
+ultralytics>=8.3.0,<9.0.0
+torch>=2.5.0,<3.0.0
+torchvision<1.0.0
+opencv-python>=4.9,<6.0.0
+numpy<3.0.0
+
+# ---------- Web 服务 ----------
+fastapi>=0.110,<1.0.0
+uvicorn>=0.29,<1.0.0
+python-multipart>=0.0.9,<1.0.0
+
+# ---------- 违规记录导出 Excel ----------
+# 仅 GET /api/export/violations?fmt=xlsx 需要；不导出的话可以不装
+openpyxl>=3.1.0,<4.0.0
