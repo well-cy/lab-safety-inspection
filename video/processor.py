@@ -6,6 +6,7 @@
       → 规则引擎 → 画面标注 → 违规截图 → 违规事件
 """
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -212,6 +213,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
 
         # 事件收集 + 截图（带冷却去重）
         for ev in events:
+            ev.frame_time = frame_time
             if not ev.is_violation:
                 continue
             key = (ev.person_id, tuple(sorted(ev.missing_ppe)))
@@ -222,7 +224,8 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
                 cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
                 ev.screenshot = rel
                 ev.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                all_events.append(ev)
+                # 缓存事件在抽帧复用时会继续被修改，历史记录必须保存独立快照。
+                all_events.append(deepcopy(ev))
 
         if writer is not None:
             writer.write(annotated)

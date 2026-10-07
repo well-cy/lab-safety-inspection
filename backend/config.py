@@ -97,11 +97,11 @@ class Config:
             "UPLOAD_DIR", root / "data" / "test" / "uploads")
         # 以下三个默认挂载在 OUTPUTS_DIR 下，便于整体搬迁
         self.ANNOTATED_DIR = _env_path(
-            "ANNOTATED_DIR", root / "outputs" / "annotated")
+            "ANNOTATED_DIR", self.OUTPUTS_DIR / "annotated")
         self.VIDEO_DIR = _env_path(
-            "VIDEO_DIR", root / "outputs" / "videos")
+            "VIDEO_DIR", self.OUTPUTS_DIR / "videos")
         self.SCREENSHOT_DIR = _env_path(
-            "SCREENSHOT_DIR", root / "outputs" / "screenshots")
+            "SCREENSHOT_DIR", self.OUTPUTS_DIR / "screenshots")
 
         # ---------- 检测（模型推理） ----------
         # 置信度阈值：低于该值的检测框丢弃
