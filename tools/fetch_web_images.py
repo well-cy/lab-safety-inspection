@@ -95,6 +95,19 @@ SEARCH_QUERIES = [
     "laboratory worker gloves samples bench",
     "research laboratory two people working",
     "laboratory technician notebook bench",
+    # ---- 2026-10-08 扩容（E6 §10 低成本替代）：专攻 mask + goggles 同框 / 多人同框 ----
+    "laboratory worker face mask goggles",
+    "scientist wearing mask safety goggles laboratory",
+    "laboratory personal protective equipment mask",
+    "biosafety laboratory worker mask",
+    "cleanroom worker face mask goggles",
+    "laboratory team multiple people working",
+    "students group laboratory experiment coats",
+    "laboratory several workers benches",
+    "scientist goggles mask pipette bench",
+    "medical laboratory worker mask gloves",
+    "laboratory safety glasses scientist",
+    "chemistry laboratory students safety goggles",
 ]
 
 # ---------- 分类目录（比全文检索精度更高，但覆盖面窄）----------
