@@ -105,6 +105,10 @@
 
 ### B+2. Coverall 口径变更与补框（2026-09-28，负责人：许婧雯）
 
+> **⚠️ 本小节的「并入」决定已被 2026-10-08 口径推翻**：她当日明确 **coverall 不收作 lab_coat**（以 E6 §2.1 口径 v2 为准）。
+> 已执行清理：`cov_*` 29 图的 35 个 lab_coat 框删除（图保留作负样本，备份 `data/_label_backup/cov_coverall_20261008/`）；
+> 当年补进 279 张旧图的 331 个 coverall 框**零残留**——宿主图（Demonstration-of-Donning 等）已随 C2/CCTV 来源域手术全部移出。
+
 E2 模型实测对连体防护服零识别（conf 降到 0.05 仍无输出）。当日用户拍板：**Coverall 并入 lab_coat**（此前为防语义混淆特意剔除，现按真实使用口径放宽）。数据源：`data/raw/ppedetect`（saba/ppedetection v7，CC BY 4.0）train 364 张，其中 329 张含 Coverall 标注。执行（`tools/merge_coverall.py`，报告 `data/coverall_merge_report.txt`）：
 
 | 处理 | 数量 | 说明 |
