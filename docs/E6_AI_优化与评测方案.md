@@ -95,13 +95,17 @@ conf=0.35 ｜ imgsz=640 ｜ IoU@0.5 ｜ 11 点插值 AP@50 ｜ 预测走项目�
 | 5 | X-未归类/其他 | 224（train 217 + valid 7） | `data/_rejected/domain_audit_20261007_misc/` | ✅ 同上 |
 | 6 | X-眼镜网图(外部) | 185（train 149 + valid 36） | `data/_rejected/domain_audit_20261007_glasses/` | ✅ 同上 |
 | — | labcoat_si #42（时装风衣，她判「剔」） | 1 | `data/_rejected/lcsi_lc29_notlabcoat_20261007/` | ✅ 同上 |
+| 7 | 蓝大褂图版判定追加：web_p63276320 / web_0192 / web_0321（她看带框目检图判「剔除」）+ cov_* 整组 29 图（她回「移」） | 32（train 28 + valid 4） | `data/_rejected/web3_cov_20261008/` | ✅ 2026-10-08 执行，源目录零残留 |
 
-合计移出 **7,279 组（14,558 文件）**，全部只移动不删除，任一 tag 可用
+合计移出 **7,311 组（14,622 文件）**，全部只移动不删除，任一 tag 可用
 `tools/reject_by_list.py --tag <tag> --restore` 整体移回。执行报告：`data/domain_audit_20261007_c2_report.txt`。
 
 **valid 重建（2026-10-07，`tools/rebuild_valid_20261007.py`）**：手术后 valid 只剩 122 张（6.7%），
 从保留池按「整家族 + md5 稳定排序」补足 151 张（全为 size=1 家族），清单 `data/_valid_rebuild_20261007_list.txt`
 （`--restore` 一键回滚）。重建后 **train∩valid 家族交集 = 0**（同源整组划分，无跨 split 泄漏）。
+
+> **2026-10-08 补移后现状**：train 1,519 图（空标签 136）/ 4,816 框（mask 473 / gloves 1,911 / lab_coat 1,798 / goggles 634）；
+> valid 269 图（空标签 25）/ 885 框（mask 78 / gloves 354 / lab_coat 310 / goggles 143）；test 未动（红线）。
 
 **手术+重建后 `data/lab_ppe`（实验室场景底座）**：
 
