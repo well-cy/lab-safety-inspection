@@ -307,3 +307,4 @@ E6_phase2_raw/
 - **执行后草稿**：**52 图 / 181 框**（person 58 / mask 28 / gloves 34 / lab_coat 40 / goggles 21），0 坏行，图签配对完整。备份 `data/_label_backup/uploads_verdict4_20261008/`（7 文件）。after 核实图 `outputs/_prelabel_uploads_20261008/after4/`（7 张 + zoom29_rhand/zoom76_glove 两张小框放大），view.html 已重生成。
 - **工具**：`tools/apply_uploads_verdict4.py`（与 verdict3 同构，SET 基于原索引内存单次重写；本批无 REJECTS/DELS）。
 - **未点名保留还剩**：#49 #71 #75 #93 #94（#63 本轮已点名处理并移出）。#76 域风险（病房防护服）随修框=事实保留；仍待拍板：#20 食品厂、#22/#34 影棚截图、#37 影棚防护服（#22 本轮她判"实验服没框"→ 事实保留该图）。
+- **§14 补记（她随后判）**：**#68 剔除**（白大褂商品特写，非真实实验室场景）→ `_rejected/uploads_reject_20261008/`。**执行后草稿：51 图 / 180 框**（person 57 / mask 28 / gloves 34 / lab_coat 39 / goggles 21），0 坏行，图签配对完整；剔除累计 44 张。view.html 已重生成（51 张）。
