@@ -217,6 +217,28 @@ C1 续批抽查图版（`outputs/phase2_provenance/c1_suspects/sheet/`，top100�
 - **待她决策**：① 候选图内 pHash 查重出 **17 个近重复组**（如 74/90/153/162/182/190 六图一组、147/177/180/181 四图一组，图版外 121-192 编号占多数，验证了她"后面大部分有重复"的观察）——等她定保留策略；② #151 疑似人体模特图是否剔除；③ #91 右下角桌上黑厚手套（old0 gloves）疑似劳保；④ 剩余编号 153-192 未审批。
 - 新工具：`tools/make_candidate_viewer.py`（候选→HTML 查看器+路径清单）、`make_verify_sheet.py`（逐条核实图版）、`make_grid_view.py`（网格定位图）、`apply_missing_verdict.py`（判定落地，坐标匹配+备份+幂等）。
 
+### B+9. 网图（小红书真实实验室场景）48 张入库（2026-10-08 深夜，负责人：许婧雯）
+
+承接 `docs/E6_AI_优化与评测方案.md` 第二阶段"补真实实验室场景"目标：本批为**小红书收集的 48 张真实实验室/检验科实拍图**（非图库摆拍、非棚拍），来源与编号见 `outputs/web_lab_scene_review/index.txt`，原始 55 张经她分诊剔除 6 张残图 + 1 张（#41 病理包埋场景）后定稿。
+
+**① 预标注三轮修框（她逐张抽查回报，AI 执行）**：`tools/apply_webscene_fix1.py`（DEL30/SET32/改类3/ADD45）、`fix2.py`（DEL8/SET2/ADD15，另剔 #41）、`fix3.py`（DEL2/SET3/ADD3）。核实图 49→48 张（`outputs/web_lab_scene_review/grid_fixed/`，`make_webscene_grid.py --no-grid`），抽查页 `verify.html`（`make_webscene_verify.py`）。她的口径确认：**普通框架眼镜不标 goggles**（#21/#22/#28/#33/#34/#36/#44 全部删）、**劳保/台面杂物不标 gloves**（#4/#33）、**一框一人**（#1/#3/#13/#23/#35/#47 拆分或合并）。备份 `data/_label_backup/webscene_fix{1,2,3}_20261008/`。
+
+**② 四关审计（`tools/audit_webscene_batch.py`，报告 `data/webscene_batch_audit.txt`）**：
+- ① 红线去重：与 dataset1（7,401 张）、dataset2（红线）、lab_ppe（2,317 张）pHash 比对，**命中 ≤8 为 0**（最近邻 12–14，无泄漏）；
+- ② 批内近重复：48 张两两 pHash 全 > 8，**无重复组**；
+- ③ 脏图筛查（`screen_dirty_graphics.py --dir`）：47 ok，1 张 `grayscale_like`（#22 朱师兄_2，暗光实拍照，非脏图，保留）；
+- ④ 标注几何：48/48 有标签，223 框，**0 越界/0 超小/0 超大/0 怪比例/0 重复框**。
+- 说明：`crosslib_phash.py` 的 `list_images` 会跳过 `_` 开头文件名，本批恰好全部以 `_` 或中文开头，**不能直接复用**，故单独实现列图。
+
+**③ 入库执行（`tools/import_webscene_batch.py`）**：
+- **类别口径**：主库当前为**四类**（person 未纳入），入库时 person 框丢弃、四类左移（mask→0 / gloves→1 / lab_coat→2 / goggles→3）；**含 person 的 5 类完整草稿另存 `data/raw/web_lab_scene/labels_5cls/`**，待主库做 5 类化（person 补标）时按 stem 一键回补，信息不丢；
+- **划分**：按**系列（同一博主同一篇笔记）整组进同一 split** 防泄漏，小系列优先给 valid（6 个系列 / 7 张），**不进 test**；
+- **命名**：中文/emoji 原名改 ASCII `webs_<编号>_<md5[:8]>.jpg`，原名/series/split 落 `data/raw/web_lab_scene/import_manifest.csv`；与主库撞名 0；
+- 预留 person 框 66 个（未入库，在 5 类存档内）。
+
+- **执行后底座（B+9 落地）**：**train 1,380 图 / 4,417 框（mask 474 / gloves 1,714 / lab_coat 1,662 / goggles 567）；valid 253 图 / 851 框（mask 84 / gloves 336 / lab_coat 303 / goggles 128）；test 732 图未动**。全库 2,365 图 / 5,852 框，0 坏行、0 孤儿标签；新入库 `webs_*` 在 `tools/audit_lab_ppe_boxes.py` 全库复检中**零 flags**（flags 目录内所有命中均属入库前既有来源）。
+- 批次增强：mask +19、gloves +67、lab_coat +60、goggles +11（四类），外加 66 个 person 框存档待 5 类化。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：

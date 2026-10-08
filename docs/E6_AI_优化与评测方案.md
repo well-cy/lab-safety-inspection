@@ -164,6 +164,9 @@ conf=0.35 ｜ imgsz=640 ｜ IoU@0.5 ｜ 11 点插值 AP@50 ｜ 预测走项目�
 **项目已有可复用素材**：`data/test/uploads/`（95 张团队实测真实照片，含自拍白大褂、多人场景、产品图与拍摄花絮）→ 需先标注与分诊；
 `data/lab_ppe` 手术后的保留池（约 2,500 图）作预训练底座。
 
+**已入库的真实场景批次（2026-10-08）**：小红书收集的 48 张真实实验室/检验科实拍图（编号见 `outputs/web_lab_scene_review/index.txt`）已按 B+9 流程入库 `data/lab_ppe`（train +41 / valid +7，系列整组划分，不进 test），四关审计全过（`data/webscene_batch_audit.txt`）。
+> **口径说明**：主库当前仍为**四类**（mask/gloves/lab_coat/goggles），本批 person 框 66 个**未入库**、存于 `data/raw/web_lab_scene/labels_5cls/`；待执行本文 §3 "5 类化：person 需补标" 时，连同 uploads 第 0 批的新增数据一起回补 person，避免库内类别口径中途混杂。
+
 ---
 
 ## 3. 第三阶段：定向微调与复评

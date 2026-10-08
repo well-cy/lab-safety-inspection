@@ -2,6 +2,10 @@
 
 > 状态：**采集中，未入库，未标注**
 > 发起：2026-09-23，许婧雯拍板"不用版权核实，能用就行"
+>
+> **旁支已落地（2026-10-08）**：与 Commons 线并行的**小红书真实实验室实拍线**已收官——48 张
+> （`data/raw/web_lab_scene/`）经三轮人工修框 + 四关审计后入库 `data/lab_ppe`（train +41 / valid +7），
+> 详见 `docs/E4_lab_coat_plan.md` §B+9。工具：`tools/audit_webscene_batch.py`、`tools/import_webscene_batch.py`。
 > 工具：`tools/fetch_web_images.py`（采集）、`tools/labeler.html`（标注）
 > 关联：`docs/E4_lab_coat_plan.md` §A3（域差根因）、§B 表（B1/B2/B3）
 
