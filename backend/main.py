@@ -31,7 +31,7 @@ from backend import export as export_api
 from backend import maintenance
 from backend.config import config
 from backend.tasks import QueueFull, TaskManager
-from backend.validators import find_invalid_date
+from backend.validators import find_invalid_date, validate_lab_text
 from rule_engine.engine import SEVERITY_NONE
 
 # 路径与阈值统一来自 backend/config.py（支持 LABSAFETY_* 环境变量覆盖）
@@ -447,6 +447,10 @@ def get_settings():
 
 @app.post("/api/settings/lab")
 async def create_lab(name: str = Form(...), description: str = Form("")):
+    try:
+        validate_lab_text(name, description)
+    except ValueError as exc:
+        return bad_request(str(exc))
     try:
         db.create_lab(name, description)
     except sqlite3.IntegrityError:

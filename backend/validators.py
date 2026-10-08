@@ -9,6 +9,7 @@
     统一放在这里，保证两个接口的校验口径完全相同。
 """
 import re
+import unicodedata
 from datetime import datetime
 
 # 日期格式：YYYY-MM-DD
@@ -46,3 +47,24 @@ def find_invalid_date(*pairs) -> tuple[str, str] | None:
         if not is_valid_date(value):
             return label, value
     return None
+
+
+LAB_NAME_MAX_LENGTH = 100
+LAB_DESCRIPTION_MAX_LENGTH = 500
+
+
+def validate_lab_text(name: str, description: str) -> None:
+    """限制新建实验室文本；不以语言或字符种类推断任意“乱码”。"""
+    if not name.strip():
+        raise ValueError("实验室名称不能为空")
+    for label, value, limit, allowed_controls in (
+        ("实验室名称", name, LAB_NAME_MAX_LENGTH, ""),
+        ("实验室说明", description, LAB_DESCRIPTION_MAX_LENGTH, "\t\r\n"),
+    ):
+        if len(value) > limit:
+            raise ValueError(f"{label}不能超过{limit}个字符")
+        if "\ufffd" in value:
+            raise ValueError(f"{label}包含编码替换字符，请检查文本编码")
+        if any(unicodedata.category(char) == "Cc" and char not in allowed_controls
+               for char in value):
+            raise ValueError(f"{label}包含不支持的控制字符")
