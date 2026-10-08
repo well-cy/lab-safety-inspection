@@ -53,6 +53,7 @@ def main():
     ap.add_argument("--nos", default="", help="逗号分隔编号")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--width", type=int, default=1200)
+    ap.add_argument("--no-grid", action="store_true", help="不叠加坐标网格（抽查看图用）")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -76,15 +77,16 @@ def main():
         z = args.width / w
         big = cv2.resize(img, (int(w * z), int(h * z)), interpolation=cv2.INTER_LINEAR)
 
-        # 坐标网格（每 0.05 一条）
-        for k in range(1, 20):
-            v = k / 20
-            x = int(v * w * z)
-            y = int(v * h * z)
-            cv2.line(big, (x, 0), (x, big.shape[0]), (90, 90, 90), 1)
-            cv2.line(big, (0, y), (big.shape[1], y), (90, 90, 90), 1)
-            cv2.putText(big, f"{v:.2f}", (x + 2, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 220, 160), 1)
-            cv2.putText(big, f"{v:.2f}", (2, y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 220, 160), 1)
+        # 坐标网格（每 0.05 一条）——--no-grid 时跳过
+        if not args.no_grid:
+            for k in range(1, 20):
+                v = k / 20
+                x = int(v * w * z)
+                y = int(v * h * z)
+                cv2.line(big, (x, 0), (x, big.shape[0]), (90, 90, 90), 1)
+                cv2.line(big, (0, y), (big.shape[1], y), (90, 90, 90), 1)
+                cv2.putText(big, f"{v:.2f}", (x + 2, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 220, 160), 1)
+                cv2.putText(big, f"{v:.2f}", (2, y - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (160, 220, 160), 1)
 
         stem = name.rsplit(".", 1)[0]
         lp = LBL / (stem + ".txt")
