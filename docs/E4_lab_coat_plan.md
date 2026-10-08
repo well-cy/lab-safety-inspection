@@ -160,6 +160,27 @@ E6 前置手术的分诊图版（`outputs/phase2_provenance/sheet_*`）人工复
   valid 273 图 / 915 框；test 732 图未动（红线）**；
 - lab_coat 现在是保留池第一大类（37.5%），mask 只剩 503——第二阶段补数优先级：**mask ≫ goggles > gloves**。
 
+### B+6. C1 嫌疑图版判定 + coverall 视频整组剔除（2026-10-08，负责人：许婧雯）
+
+C1 续批抽查图版（`outputs/phase2_provenance/c1_suspects/sheet/`，top100）她按编号判定，AI 先逐图核实再执行：
+
+| 编号 | 图 | 判定（她报） | 执行 |
+|---|---|---|---|
+| 2 | istockphoto-809958214-0012 | 多了个实验服框 | 删重复 lab_coat 框（保留更完整的 1 个） |
+| 4 | istockphoto-810129952-0015 | 实验服框过大过小均有 | 3 个 lab_coat 框重画为 2 个（中央人物含举臂袖 + 右侧人物） |
+| 7-19 | 8533991 视频帧 13 张 | 剔除 | **按家族跨 split 扩展**：8533991 全组 16 张（train 11 + valid 5）整图移出 |
+| 43 | istockphoto-809879018-0025 | 框选过小 | 右侧背景女子 + 左侧男子两个过小 lab_coat 框重画 |
+| 44 | istockphoto-810129952-0003 | 框选过大 | 过大 lab_coat 框重画（收窄到主人物含袖） |
+| 63/64 | 4267250 视频帧 2 张 | 剔除 | **按家族跨 split 扩展**：4267250 全组 16 张（train 14 + valid 2）整图移出 |
+| 80 | F30 | 框选错位 | lab_coat 框重画（含双臂袖，去除左侧背景） |
+| 85/86 | F4 两帧 | 框选错位 | 胸前误置小框移到白袖/裙摆；#86 底部条修正到裙摆 |
+| 92/93 | g105 两帧 | 框选错位 | lab_coat 框重画（含右/左伸臂袖） |
+| 97 | g39 | 无法判断是否戴手套 | 删该 gloves 框（不可验证的标注不留） |
+
+- 剔除落盘 `data/_rejected/coverall_video_20261008/`（32 组 / 64 文件），零残留可回滚；两家族均为连体防护服（coverall）演示视频，与「coverall 不收 + 负样本须实验室场景」口径一致。
+- 修框备份 `data/_label_backup/c1_suspects_fix_20261008/train/`；修正后核实图 `outputs/c1_batch_verdict_20261008/after/`。
+- **执行后 `data/lab_ppe`：train 1,494 图（空标签 136）/ 4,727 框（mask 462 / gloves 1,874 / lab_coat 1,782 / goggles 609）；valid 262 图 / 870 框（mask 76 / gloves 350 / lab_coat 308 / goggles 136）；test 未动（红线）**。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：
