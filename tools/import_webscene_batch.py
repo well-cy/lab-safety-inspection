@@ -38,17 +38,31 @@ ROOT = Path(__file__).resolve().parent.parent
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--batch", default="", help="批次后缀，如 r2")
 _ap.add_argument("--apply", action="store_true")
+_ap.add_argument("--src", default="", help="覆盖图片目录")
+_ap.add_argument("--lbl", default="", help="覆盖五类草稿标签目录")
+_ap.add_argument("--index", default="", help="覆盖索引文件")
+_ap.add_argument("--arch", default="", help="五类草稿存档目录")
+_ap.add_argument("--manifest", default="", help="溯源表路径")
+_ap.add_argument("--prefix", default="", help="入库文件名前缀（默认 webs<batch>）")
 _args = _ap.parse_args()
 _b = _args.batch
 _sfx = f"_{_b}" if _b else ""
-PREFIX = f"webs{_b}" if _b else "webs"
+PREFIX = _args.prefix or (f"webs{_b}" if _b else "webs")
 
-SRC_IMG = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_sfx}"
-SRC_LBL5 = ROOT / "data" / "_prelabel" / f"webscene{_sfx}" / "labels"
-ARCH_LBL5 = ROOT / "data" / "raw" / "web_lab_scene" / "labels_5cls"
-MANIFEST = ROOT / "data" / "raw" / "web_lab_scene" / f"import_manifest{_sfx}.csv"
+
+def _p(v, default):
+    if not v:
+        return default
+    q = Path(v)
+    return q if q.is_absolute() else ROOT / q
+
+
+SRC_IMG = _p(_args.src, ROOT / "data" / "raw" / "web_lab_scene" / f"images{_sfx}")
+SRC_LBL5 = _p(_args.lbl, ROOT / "data" / "_prelabel" / f"webscene{_sfx}" / "labels")
+ARCH_LBL5 = _p(_args.arch, ROOT / "data" / "raw" / "web_lab_scene" / "labels_5cls")
+MANIFEST = _p(_args.manifest, ROOT / "data" / "raw" / "web_lab_scene" / f"import_manifest{_sfx}.csv")
 DS = ROOT / "data" / "lab_ppe"
-INDEX = ROOT / "outputs" / f"web_lab_scene_review{_sfx}" / "index.txt"
+INDEX = _p(_args.index, ROOT / "outputs" / f"web_lab_scene_review{_sfx}" / "index.txt")
 
 CLASSES = ["mask", "gloves", "lab_coat", "goggles"]
 CLS5 = {0: "person", 1: "mask", 2: "gloves", 3: "lab_coat", 4: "goggles"}
@@ -69,9 +83,11 @@ def load_index():
 
 
 def series_of(stem: str) -> str:
-    """从文件名推系列（同一篇笔记/同一组图）。stock 批每张自成系列。"""
+    """从文件名推系列（同一篇笔记/同一组图）。stock/uploads 批每张自成系列。"""
     if stem.startswith("stock_"):
         return stem            # r2：19 张批内互不近重复（审计②），按张独立划分
+    if stem.startswith("img_"):
+        return stem            # uploads 第 0 批：批内 0 近重复，按张独立划分
     base = stem.split("_来自小红书")[0]
     m = re.match(r"^_(\d+)_(.+)$", base)      # 形如 _1_青春药发光
     if m:
@@ -177,6 +193,7 @@ def main() -> int:
             "".join(f"{c} {v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {v[3]:.6f}\n"
                     for c, v in it["keep5"]), encoding="utf-8")
 
+    MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     with MANIFEST.open("w", encoding="utf-8") as f:
         f.write("new_name,split,num,series,original_name,boxes_4cls,boxes_5cls\n")
         for it in sorted(items, key=lambda x: x["num"]):

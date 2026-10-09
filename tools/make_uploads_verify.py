@@ -109,7 +109,12 @@ def main() -> int:
     ap.add_argument("--range", default="")
     ap.add_argument("--width", type=int, default=1200)
     ap.add_argument("--tag", default="")
+    ap.add_argument("--index", default="", help="覆盖索引文件（默认用 95 张原表）")
     args = ap.parse_args()
+    global INDEX
+    if args.index:
+        q = Path(args.index)
+        INDEX = q if q.is_absolute() else ROOT / q
     idx = read_index()
     nos = parse_nos(args.nos, args.range)
     out_dir = Path(args.out)

@@ -35,14 +35,28 @@ ROOT = Path(__file__).resolve().parent.parent
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--batch", default="", help="批次后缀，如 r2")
+ap.add_argument("--src", default="", help="覆盖图片目录（绝对路径或相对 ROOT）")
+ap.add_argument("--lbl", default="", help="覆盖标签目录")
+ap.add_argument("--index", default="", help="覆盖索引文件")
+ap.add_argument("--tag", default="", help="报告文件名标签，默认同 batch")
+ap.add_argument("--dirty", default="", help="脏图筛查 TSV 路径")
 args = ap.parse_args()
 _b = f"_{args.batch}" if args.batch else ""
+_tag = f"_{args.tag}" if args.tag else _b
 
-SRC = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_b}"
-LBL = ROOT / "data" / "_prelabel" / f"webscene{_b}" / "labels"
-INDEX = ROOT / "outputs" / f"web_lab_scene_review{_b}" / "index.txt"
-REPORT = ROOT / "data" / f"webscene_batch_audit{_b}.txt"
-DIRTY_TSV = ROOT / "outputs" / f"webscene_dirty_stats{_b}.tsv"
+
+def _p(v, default):
+    if not v:
+        return default
+    q = Path(v)
+    return q if q.is_absolute() else ROOT / q
+
+
+SRC = _p(args.src, ROOT / "data" / "raw" / "web_lab_scene" / f"images{_b}")
+LBL = _p(args.lbl, ROOT / "data" / "_prelabel" / f"webscene{_b}" / "labels")
+INDEX = _p(args.index, ROOT / "outputs" / f"web_lab_scene_review{_b}" / "index.txt")
+REPORT = ROOT / "data" / f"webscene_batch_audit{_tag}.txt"
+DIRTY_TSV = _p(args.dirty, ROOT / "outputs" / f"webscene_dirty_stats{_b}.tsv")
 
 REF_LIBS = {
     "dataset1": ROOT / "data" / "raw" / "dataset1",

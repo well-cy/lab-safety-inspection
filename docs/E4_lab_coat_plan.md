@@ -252,6 +252,23 @@ C1 续批抽查图版（`outputs/phase2_provenance/c1_suspects/sheet/`，top100�
 - **执行后底座（B+10 落地）**：**train 1,396 图 / 4,510 框（mask 493 / gloves 1,748 / lab_coat 1,679 / goggles 590）；valid 256 图 / 864 框（mask 85 / gloves 341 / lab_coat 306 / goggles 132）；test 732 图未动**。全库 **2,384 图 / 5,958 框**，0 坏行、0 孤儿标签。
 - 批次增强：mask +20、gloves +39、lab_coat +20、goggles +27（四类共 106 框），外加 31 个 person 框存档。
 
+### B+11. uploads 第 0 批 95→21 张入库（2026-10-09，负责人：许婧雯）
+
+upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/uploads_20261008/labels/`，剔除 52 张存 `data/_rejected/uploads_reject_20261008/`），本日完成入库前审计与入库。
+
+**① 四关审计（`tools/audit_webscene_batch.py --src data/test/uploads --lbl ... --index ... --tag uploads0`，报告 `data/webscene_batch_audit_uploads0{,b,c}.txt`）**：
+- **⚠️ 首轮即爆雷**：43 张中 **14 张与主库 pHash dist=0/2（像素级同图，13 张撞 `images/test/`、1 张撞 valid）** —— uploads 本质含 dataset1 的重命名子集，直接入库即 **train/test 泄漏**，剔 14 张。
+- 另剔 5 张域/质量不符（影棚灰底、蓝底摆拍、白底电商产品图 ×2、暗竖屏）。
+- **复检又补剔 3 张**（首轮 `tail` 截断致漏看 dataset1 段）：`img_8fbb49f6`（与 dataset1 92 张 `screenshot*` 系列互 dist≤8）、`img_8fda114e` / `img_f34aa3f7`（dist=0 同图）。
+- 她拍板「全剔」，共 **22 张**移入 `data/_rejected/uploads_20261008_final/`。**三检（`uploads0c`）全过**：dataset1 / 红线 / 主库 0 命中、批内 0 重复、脏图 0、几何 0 问题（原第④关 2 个超大 person 框 #37/#41 恰在被剔名单内）。
+- **教训固化**：外部批次入库前**必须先跑第①关对 dataset1/红线/主库三库去重**，且审计报告**必须读完整文件**（不能只看 tail）。
+
+**② 入库执行（`tools/import_webscene_batch.py --src data/test/uploads --prefix up0`）**：剩 **21 图 / 61 框**（person 21 / lab_coat 20 / gloves 13 / mask 3 / goggles 4）→ person 21 框丢弃（5 类草稿存档 `labels_5cls/`），**train +18 / valid +3**（每张自成系列按 ~15% 划分），不进 test；命名 `up0_<编号>_<md5[:8]>.jpg`，溯源 `data/raw/uploads0/import_manifest.csv`。
+
+- **执行后底座（B+11 落地）**：**train 1,414 图 / 4,543 框（mask 496 / gloves 1,757 / lab_coat 1,696 / goggles 594）；valid 259 图 / 871 框（mask 85 / gloves 345 / lab_coat 309 / goggles 132）；test 732 图未动（584 框）**。全库 **2,405 图 / 5,998 框**，0 坏行、0 跨 split 重名、0 孤儿标签。
+- 批次增强：mask +3、gloves +13、lab_coat +20、goggles +4（四类共 40 框），外加 21 个 person 框存档。
+- 工具增强：`import_webscene_batch.py` 增 `--src/--lbl/--index/--arch/--manifest/--prefix`（可入任意批次）+ 写 manifest 前自动建父目录。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：
