@@ -1,23 +1,26 @@
 # -*- coding: utf-8 -*-
-"""audit_webscene_batch.py —— web_lab_scene 48 张网图入库前四关审计（2026-10-08）
+"""audit_webscene_batch.py —— web_lab_scene 网图入库前四关审计
 
-批次：data/raw/web_lab_scene/images（48 张，index=outputs/web_lab_scene_review/index.txt）
-草稿：data/_prelabel/webscene_r1/labels（E6 五类 0=person/1=mask/2=gloves/3=lab_coat/4=goggles）
+批次：--batch r1 → data/raw/web_lab_scene/images（48 张，outputs/web_lab_scene_review/index.txt）
+              草稿 data/_prelabel/webscene_r1/labels；默认 r1
+      --batch r2 → images_r2 / webscene_r2 / review_r2
+草稿五类 0=person/1=mask/2=gloves/3=lab_coat/4=goggles
 
 四关：
   ① 红线去重：与 data/raw/dataset1、data/raw/dataset2(external_test 红线)、data/lab_ppe 做 pHash 比对
-  ② 批内近重复：48 张两两 pHash
+  ② 批内近重复：批内两两 pHash
   ③ 脏图筛查：由 tools/screen_dirty_graphics.py --dir 另跑（本脚本汇总其 TSV）
   ④ 标注几何审计：格式/越界/超小/超大面积/极端宽高比/同图同类重复框(IoU>0.9)/贴边框
 
 注意：本脚本自己列图，**不跳过 "_" 开头文件名**（crosslib_phash.list_images 会跳过，
-      而本批文件名恰好全部以 "_" 或中文开头，直接复用会漏检）。
+      而批次文件名可能全部以 "_" 或中文开头，直接复用会漏检）。
 
-用法: python tools/audit_webscene_batch.py
-输出: data/webscene_batch_audit.txt
+用法: python tools/audit_webscene_batch.py [--batch r2]
+输出: data/webscene_batch_audit{_batch}.txt
 """
 from __future__ import annotations
 
+import argparse
 import io
 import sys
 from collections import Counter
@@ -29,11 +32,17 @@ import numpy as np
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "data" / "raw" / "web_lab_scene" / "images"
-LBL = ROOT / "data" / "_prelabel" / "webscene_r1" / "labels"
-INDEX = ROOT / "outputs" / "web_lab_scene_review" / "index.txt"
-REPORT = ROOT / "data" / "webscene_batch_audit.txt"
-DIRTY_TSV = ROOT / "outputs" / "webscene_dirty_stats.tsv"
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--batch", default="", help="批次后缀，如 r2")
+args = ap.parse_args()
+_b = f"_{args.batch}" if args.batch else ""
+
+SRC = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_b}"
+LBL = ROOT / "data" / "_prelabel" / f"webscene{_b}" / "labels"
+INDEX = ROOT / "outputs" / f"web_lab_scene_review{_b}" / "index.txt"
+REPORT = ROOT / "data" / f"webscene_batch_audit{_b}.txt"
+DIRTY_TSV = ROOT / "outputs" / f"webscene_dirty_stats{_b}.tsv"
 
 REF_LIBS = {
     "dataset1": ROOT / "data" / "raw" / "dataset1",
@@ -118,7 +127,7 @@ def iou(a, b):
 def main() -> int:
     rep: list[str] = []
     idx = load_index()
-    rep.append(f"# web_lab_scene 批次入库前审计  {len(idx)} 图  (2026-10-08)")
+    rep.append(f"# web_lab_scene{_b} 批次入库前审计  {len(idx)} 图  (2026-10-09)")
     rep.append("")
 
     # ---- 载入源库 ----
@@ -180,7 +189,7 @@ def main() -> int:
         for d, a, b in sorted(pairs):
             rep.append(f"  dist={d}  {a}  <->  {b}")
     else:
-        rep.append("  无（48 张两两 pHash 均 > 8）")
+        rep.append(f"  无（{len(ok_names)} 张两两 pHash 均 > {THR_SELF}）")
     rep.append("")
 
     # ---- 第④关 标注几何 ----

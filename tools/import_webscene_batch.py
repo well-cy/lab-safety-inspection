@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""import_webscene_batch.py —— web_lab_scene 48 张网图入库 data/lab_ppe（2026-10-08）
+"""import_webscene_batch.py —— web_lab_scene 网图入库 data/lab_ppe
 
-来源：data/raw/web_lab_scene/images（小红书收集，48 张，四关审计已过）
-草稿：data/_prelabel/webscene_r1/labels（E6 五类 0=person/1=mask/2=gloves/3=lab_coat/4=goggles）
-主库：data/lab_ppe（**四类** 0=mask/1=gloves/2=lab_coat/3=goggles）
+--batch r1（默认）：images 48 张小红书网图；按博主系列整组划分
+--batch r2：images_r2 19 张 stock 视频截图；批内审计无近重复 → 每张自成系列按比例划分
 
 类别口径：
   - 主库当前是四类（person 未纳入），因此入库时 **person 框丢弃**、其余四类整体左移一位：
@@ -11,15 +10,15 @@
   - 5 类完整草稿另存 data/raw/web_lab_scene/labels_5cls/，等主库做 5 类化（person 补标）
     时用同 stem 一键回补 person 框，不丢信息。
 
-划分：**按系列（同一博主同一篇/同一组图）整组进同一 split**，防跨 split 泄漏；
-      小系列优先给 valid（目标 ~15%），大系列留 train；**不进 test**。
+划分：**系列整组进同一 split**，防跨 split 泄漏；小系列优先给 valid（目标 ~15%），
+      大系列留 train；**不进 test**。
 
-命名：中文/emoji 原名对训练管线不友好，统一改 ASCII: webs_<编号>_<md5[:8]>.jpg，
-      原名/系列/split 写入 import_manifest.csv 备查。
+命名：非 ASCII 原名对训练管线不友好，统一改 ASCII: webs{b}_<编号>_<md5[:8]>.jpg，
+      原名/系列/split 写入 import_manifest{_b}.csv 备查。
 
 用法:
-    python tools/import_webscene_batch.py            # 干跑
-    python tools/import_webscene_batch.py --apply    # 落盘
+    python tools/import_webscene_batch.py [--batch r2]            # 干跑
+    python tools/import_webscene_batch.py [--batch r2] --apply    # 落盘
 """
 from __future__ import annotations
 
@@ -35,12 +34,21 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC_IMG = ROOT / "data" / "raw" / "web_lab_scene" / "images"
-SRC_LBL5 = ROOT / "data" / "_prelabel" / "webscene_r1" / "labels"
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--batch", default="", help="批次后缀，如 r2")
+_ap.add_argument("--apply", action="store_true")
+_args = _ap.parse_args()
+_b = _args.batch
+_sfx = f"_{_b}" if _b else ""
+PREFIX = f"webs{_b}" if _b else "webs"
+
+SRC_IMG = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_sfx}"
+SRC_LBL5 = ROOT / "data" / "_prelabel" / f"webscene{_sfx}" / "labels"
 ARCH_LBL5 = ROOT / "data" / "raw" / "web_lab_scene" / "labels_5cls"
-MANIFEST = ROOT / "data" / "raw" / "web_lab_scene" / "import_manifest.csv"
+MANIFEST = ROOT / "data" / "raw" / "web_lab_scene" / f"import_manifest{_sfx}.csv"
 DS = ROOT / "data" / "lab_ppe"
-INDEX = ROOT / "outputs" / "web_lab_scene_review" / "index.txt"
+INDEX = ROOT / "outputs" / f"web_lab_scene_review{_sfx}" / "index.txt"
 
 CLASSES = ["mask", "gloves", "lab_coat", "goggles"]
 CLS5 = {0: "person", 1: "mask", 2: "gloves", 3: "lab_coat", 4: "goggles"}
@@ -61,7 +69,9 @@ def load_index():
 
 
 def series_of(stem: str) -> str:
-    """从文件名推系列（同一篇笔记/同一组图）。"""
+    """从文件名推系列（同一篇笔记/同一组图）。stock 批每张自成系列。"""
+    if stem.startswith("stock_"):
+        return stem            # r2：19 张批内互不近重复（审计②），按张独立划分
     base = stem.split("_来自小红书")[0]
     m = re.match(r"^_(\d+)_(.+)$", base)      # 形如 _1_青春药发光
     if m:
@@ -70,9 +80,7 @@ def series_of(stem: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true")
-    args = ap.parse_args()
+    apply = _args.apply
 
     idx = load_index()
     have = set()
@@ -133,7 +141,7 @@ def main() -> int:
     for it in items:
         raw = (SRC_IMG / it["fname"]).read_bytes()
         it["md5"] = hashlib.md5(raw).hexdigest()
-        it["new"] = f"webs_{it['num']:02d}_{it['md5'][:8]}"
+        it["new"] = f"{PREFIX}_{it['num']:02d}_{it['md5'][:8]}"
     clash = sorted({i["new"] for i in items} & have)
     print(f"与主库撞名: {len(clash)} {clash[:3]}")
 
@@ -152,7 +160,7 @@ def main() -> int:
     for i, n in enumerate(CLASSES):
         print(f"{n:9} {old[i]:5}  +{newc[i]:4}  {old[i] + newc[i]:6}")
 
-    if not args.apply:
+    if not apply:
         print("\n[干跑] 未写盘。确认后加 --apply")
         return 0
 

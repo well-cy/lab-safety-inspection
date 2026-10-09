@@ -239,6 +239,19 @@ C1 续批抽查图版（`outputs/phase2_provenance/c1_suspects/sheet/`，top100�
 - **执行后底座（B+9 落地）**：**train 1,380 图 / 4,417 框（mask 474 / gloves 1,714 / lab_coat 1,662 / goggles 567）；valid 253 图 / 851 框（mask 84 / gloves 336 / lab_coat 303 / goggles 128）；test 732 图未动**。全库 2,365 图 / 5,852 框，0 坏行、0 孤儿标签；新入库 `webs_*` 在 `tools/audit_lab_ppe_boxes.py` 全库复检中**零 flags**（flags 目录内所有命中均属入库前既有来源）。
 - 批次增强：mask +19、gloves +67、lab_coat +60、goggles +11（四类），外加 66 个 person 框存档待 5 类化。
 
+### B+10. 网图 r2 批次（stock 视频截图）19 张入库（2026-10-09，负责人：许婧雯）
+
+承接 B+9 同一目标：本批为 **19 张 stock 视频截图**（真实实验室场景，PNG 转 JPG，源归档 `data/raw/web_lab_scene/_src_screenshots_r2/`），编号见 `outputs/web_lab_scene_review_r2/index.txt`。
+
+**① 预标注修框（AI 三轮 + 她手工框选定稿）**：`tools/apply_webscene_fix_r2.py`（DEL18/SET14/CLS1/ADD26，含 #9 裁底部 22 行视频播放条并重缩放标签 y）→ `fix_r2b.py`（SET4/ADD7；**口径拍板：护目镜实际戴在眼上、白口罩要标**，推翻 AI "未佩戴不标" 的误判）→ `fix_r2c.py`（SET4，#12 手套框改用 HSV 蓝色阈值分割实测坐标）。她仍不满意 9/12/13 后，**交付手工框选页**（`tools/make_box_editor.py` → `outputs/web_lab_scene_review_r2/editor.html`，离线自包含：拖框/缩放/增删/切类/导出标签），**#9/#12/#13 由她亲自拖框定稿**，`tools/import_manual_boxes.py` 落盘（带备份 `data/_label_backup/webscene_r2_manual_20261009/`）。定稿 19 图 / 137 框（person 31 / mask 20 / gloves 39 / lab_coat 20 / goggles 27），0 坏行。
+
+**② 四关审计（`tools/audit_webscene_batch.py --batch r2`，报告 `data/webscene_batch_audit_r2.txt`）**：① 红线去重 0 命中（dataset1 7,401 / dataset2 251 / lab_ppe 2,365，最近邻 12–14）；② 批内近重复 0（19 张两两 pHash 均 >8，**故按张独立划分不构成同源泄漏**）；③ 脏图 19/19 ok；④ 几何 137 框 0 问题。
+
+**③ 入库执行（`tools/import_webscene_batch.py --batch r2`，已参数化支持批次）**：person 框 31 个丢弃（5 类完整草稿照例存档 `labels_5cls/`，累计待 5 类化回补）；**train +16 / valid +3**（#1/#2/#3，每张自成系列按 ~15% 比例划分），不进 test；命名 `websr2_<编号>_<md5[:8]>.jpg`，溯源 `import_manifest_r2.csv`，撞名 0。
+
+- **执行后底座（B+10 落地）**：**train 1,396 图 / 4,510 框（mask 493 / gloves 1,748 / lab_coat 1,679 / goggles 590）；valid 256 图 / 864 框（mask 85 / gloves 341 / lab_coat 306 / goggles 132）；test 732 图未动**。全库 **2,384 图 / 5,958 框**，0 坏行、0 孤儿标签。
+- 批次增强：mask +20、gloves +39、lab_coat +20、goggles +27（四类共 106 框），外加 31 个 person 框存档。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：

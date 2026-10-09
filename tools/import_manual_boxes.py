@@ -83,7 +83,14 @@ def main() -> int:
             BAK.mkdir(parents=True, exist_ok=True)
             if lp.exists():
                 import shutil
-                shutil.copyfile(lp, BAK / lp.name)
+                stamp = __import__("datetime").datetime.now().strftime("%H%M%S")
+                dst = BAK / f"{lp.stem}__{stamp}.txt"
+                i = 2
+                while dst.exists():
+                    dst = BAK / f"{lp.stem}__{stamp}_{i}.txt"
+                    i += 1
+                shutil.copyfile(lp, dst)
+                print(f"   备份 -> {dst.name}")
             with open(lp, "w", encoding="utf-8", newline="\n") as f:
                 for c, v in rows:
                     f.write(f"{c} {v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {v[3]:.6f}\n")
