@@ -132,3 +132,28 @@
 | `outputs/lcsi_audit/dirty/sheet_01..06.jpg` | 脏图候选核查页（按编号回报） |
 | `outputs/lcsi_audit/realscene/sheet_01..06.jpg` | 真实场景组核查页（漏标检查） |
 | `outputs/lcsi_audit_pending.txt` | 既有挂账：lcsi_27 待剔 |
+
+---
+
+## 6. 处置执行结果（同日追加，她授权"做你觉得最好的方案"）
+
+执行 `tools/lcsi_prune_apply.py --apply`（剔除=移动 `data/_rejected/lcsi_prune_20261009/<split>/`，manifest `_prune_manifest.csv`，可整体移回）：
+
+| 动作 | 数量 |
+|---|---|
+| R1 d=0 完全冗余 | 21 |
+| R2 挂账 lcsi_27（websr3_14 覆盖） | 1 |
+| R3 电商目录负样本（空标签非监控帧/灰图，chkC 图版证实） | 99 |
+| R4 目录族 LC##/Lab_coat_*/suggested-* | 40 |
+| R5 其他族目录正样本（flag 命中） | 10 |
+| R6 png-2024-05-20 目录图（flag 命中） | 16 |
+| R7 20250228 同一摆拍抽稀（留 4） | 49 |
+| R8 crop_margin 抽稀（留 3） | 24 |
+| R9 frame_* 连续帧抽稀（每 3 留 1） | 24 |
+| R10 漏标毒点（KakaoTalk_10 / CoatGoggle8；第三张被 R6 覆盖） | 2 |
+| **剔除合计** | **286 张 / 225 框** |
+| **保留** | **145 张 / 189 框**（全为真实拍摄场景；mask1/gloves4/lab_coat181/goggles3） |
+
+配套修复：`-2024-05-20-143341` 重复框删 #1（备份 `_label_backup/lcsi_prune_20261009/`）；剩余 lcsi 跨 split 泄漏复检**归零**（valid 侧 2 张移回 train）。
+
+**执行后底座**：train 1,200/4,480（mask506 gloves1804 lab_coat1544 goggles626）、valid 222/856（mask87 gloves353 lab_coat281 goggles135）、test 732/584 未动；全库 **2,154 图 / 5,920 框**，0 坏行 / 0 跨 split 重名 / 0 孤儿。E4 已增 B+13。

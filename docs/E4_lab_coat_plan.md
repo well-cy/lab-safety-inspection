@@ -353,6 +353,14 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 
 工具：几何审计 `tools/audit_lab_ppe_boxes.py`（报告 `data/lab_ppe_audit_report.txt`）；按类别画框抽检 `tools/draw_labels.py --only-class <类>`。
 
+### B+13. lcsi（labcoat_si）431 张专项审计 + 域瘦身（2026-10-09，负责人：许婧雯）
+
+**审计**（只读，`tools/audit_lcsi_subset.py`，报告 `docs/lcsi_audit_20261009.md`）：①红线 vs dataset1/dataset2 **0 命中**；②内部近重复 41 组/104 张（**d=0 完全冗余 21 组/42 张**，标签核对一致；**跨 split 泄漏 8 组/valid 侧 10 张**——labcoat_si 原方案"只进 train"，valid 里的 62 张本身违规）；③脏图 126 张，图版目检证实负样本几乎全是**电商服装目录图**；④几何干净（2 超大框 + 1 重复框）。**结构性失真**：431 图占全库 17.7% 仅 414 框（6.7%），128 空标签，99.3% 单类图，全族 640×640 方块，54% 框贴边；漏标毒点 3 张（口罩/护目镜/手套未标）。
+
+**处置**（她授权"做你觉得最好的方案"，`tools/lcsi_prune_apply.py --apply`，全部移动到 `data/_rejected/lcsi_prune_20261009/` 可逆，manifest `_prune_manifest.csv`）：保留**真实拍摄场景**、剔除**电商目录域与冗余**——剔 **286 张 / 225 框**（R1 d=0 冗余 21 + R2 挂账 lcsi_27 + R3 目录负样本 99 + R4 目录族 LC##/Lab_coat_*/suggested 40 + R5/R6 目录正样本 26 + R7 20250228 同一摆拍抽稀 49 + R8 crop_margin 抽稀 24 + R9 监控连续帧抽稀 24 + R10 漏标毒点 2）；保留 **145 张 / 189 框**（KakaoTalk 实拍 19、frame_* 监控 32、png-2024-05-20 真实场景 30、其他真实有框 43、CoatGoggle 4、灰图负样本 10、crop_margin/摆拍代表 7）。含 mask/gloves/goggles 框的图全部保护保留（除 lcsi_27，其内容由标注更全的 websr3_14 覆盖）。另：修复 1 处重复框（`-2024-05-20-143341` IoU 0.94，删 #1，备份 `_label_backup/lcsi_prune_20261009/`）；剩余 lcsi 重检跨 split 泄漏 **归零**（valid 侧 2 张移回 train）。
+
+**执行后底座（B+13 落地）**：**train 1,200 图 / 4,480 框（mask 506 / gloves 1,804 / lab_coat 1,544 / goggles 626）；valid 222 图 / 856 框（mask 87 / gloves 353 / lab_coat 281 / goggles 135）；test 732 图 / 584 框未动**。全库 **2,154 图 / 5,920 框**（mask 652 / gloves 2,279 / lab_coat 1,862 / goggles 1,127），0 坏行、0 跨 split 重名、0 孤儿。lcsi 占比从 17.7% 图/6.7% 框降到 6.7% 图/3.2% 框，域失真显著缓解。可回收：`_rejected/lcsi_prune_20261009/` 整体移回即可（毒点 3 张如需保留须先补标）。
+
 ---
 
 ## C. 增训方案
