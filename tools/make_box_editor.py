@@ -77,6 +77,8 @@ HTML = r"""<!DOCTYPE html>
 <header>
   <span id="cats"></span>
   <select id="picker"></select>
+  <button id="prev" class="gray">‹ 上一张</button>
+  <button id="next" class="gray">下一张 ›</button>
   <label style="font-size:12px;color:#9aa0a6">缩放 <input type="range" id="zoom" min="30" max="220" value="100" style="width:110px;vertical-align:middle"></label>
   <button id="reset" class="gray">撤销本图改动</button>
   <button id="clear" class="gray">清空本图</button>
@@ -137,13 +139,22 @@ const catsEl=document.getElementById('cats');
 });
 
 // 图片下拉
+function shortName(n){ return n.replace(/^stock_/,'').replace(/^(r3[su]|webs|websr2)_/,'').replace(/\.jpg$/,''); }
+function refreshPicker(){
+  [...picker.options].forEach((o,i)=>{
+    const im=imgs[i];
+    o.textContent='#'+im.no+' '+shortName(im.name)+'（'+im.boxes.length+' 框'+(dirty[im.name]?' · 已改':'')+'）';
+  });
+}
 imgs.forEach((im,i)=>{
   const o=document.createElement('option'); o.value=i;
-      o.textContent='#'+im.no+' '+im.name.replace(/^stock_/,'').replace(/\.jpg$/,'')+
-                    '（'+im.boxes.length+' 框）';
   picker.appendChild(o);
 });
+refreshPicker();
 picker.onchange=()=>{cur=+picker.value; sel=-1; render();};
+document.getElementById('prev').onclick=()=>go(cur-1);
+document.getElementById('next').onclick=()=>go(cur+1);
+function go(i){ if(i<0||i>=imgs.length) return; cur=i; sel=-1; render(); }
 document.getElementById('zoom').oninput=e=>{z=e.target.value/100; render();};
 document.getElementById('reset').onclick=()=>{
   imgs[cur]=JSON.parse(JSON.stringify(orig[cur])); sel=-1;
@@ -191,7 +202,8 @@ function render(){
     place(d,b,im);
   });
   [...catsEl.children].forEach(el=>el.classList.toggle('on',+el.dataset.c===cls));
-  dirtyEl.textContent='已改 '+Object.keys(dirty).length+' 张';
+  dirtyEl.textContent='已改 '+Object.keys(dirty).length+'/'+imgs.length+' 张';
+  refreshPicker();
 }
 function place(d,b,im){
   d.style.left=(b.x*im.nw*z)+'px'; d.style.top=(b.y*im.nh*z)+'px';
@@ -246,9 +258,12 @@ window.addEventListener('pointerup',e=>{
 });
 
 window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   if(e.key==='Delete'||e.key==='Backspace'){
     if(sel>=0){ imgs[cur].boxes.splice(sel,1); sel=-1; touch(); render(); e.preventDefault(); }
   }
+  if(e.key==='ArrowLeft'){ go(cur-1); e.preventDefault(); }
+  if(e.key==='ArrowRight'){ go(cur+1); e.preventDefault(); }
   if(e.key>='1'&&e.key<='5'){
     cls=+e.key-1;
     if(sel>=0){ imgs[cur].boxes[sel].c=cls; touch(); }
@@ -304,6 +319,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", default="r2")
     ap.add_argument("--focus", type=int, default=9, help="打开时默认定位的图片编号")
+    ap.add_argument("--max-side", type=int, default=2400,
+                    help="预览图最长边超过此值则生成缩图（坐标仍按原图归一化，不影响标签精度）")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
     _b = f"_{args.batch}" if args.batch else ""
@@ -312,6 +329,7 @@ def main():
     IMG = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_b}"
     LBL = ROOT / "data" / "_prelabel" / f"webscene{_b}" / "labels"
     out = Path(args.out) if args.out else REVIEW / "editor.html"
+    VIEW = REVIEW / "_view"
 
     idx = {}
     for line in (REVIEW / "index.txt").read_text(encoding="utf-8").splitlines():
@@ -327,6 +345,17 @@ def main():
         name = idx[n]
         ip = IMG / name
         w, h = imsize(ip)
+        # 超长边 -> 生成预览缩图（归一化坐标与原图一致，标签精度不受影响）
+        vp, vw, vh = ip, w, h
+        if max(w, h) > args.max_side:
+            s = args.max_side / max(w, h)
+            vw, vh = max(1, int(w * s)), max(1, int(h * s))
+            VIEW.mkdir(parents=True, exist_ok=True)
+            vp = VIEW / (Path(name).stem + ".jpg")
+            if not vp.exists():
+                im = cv2.imdecode(np.fromfile(str(ip), dtype=np.uint8), cv2.IMREAD_COLOR)
+                cv2.imencode(".jpg", cv2.resize(im, (vw, vh), interpolation=cv2.INTER_AREA),
+                             [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tofile(str(vp))
         rows = []
         lp = LBL / (Path(name).stem + ".txt")
         if lp.exists():
@@ -336,12 +365,13 @@ def main():
                     rows.append([int(q[0])] + [round(float(v), 6) for v in q[1:5]])
         imgs.append({
             "no": n, "name": name,
-            "path": "file:///" + str(ip).replace("\\", "/"),
-            "nw": w, "nh": h, "boxes": rows,
+            "path": "file:///" + str(vp).replace("\\", "/"),
+            "nw": vw, "nh": vh, "boxes": rows,
         })
         if n == args.focus:
             focus = len(imgs) - 1
-        print(f"  #{n} {name} {w}x{h} boxes={len(rows)}")
+        tag = "" if (vw, vh) == (w, h) else f" (view {vw}x{vh})"
+        print(f"  #{n} {name} {w}x{h} boxes={len(rows)}{tag}")
 
     html = (HTML
             .replace("__TITLE__", f"手工框选 · {len(imgs)} 张（batch {args.batch}）")
