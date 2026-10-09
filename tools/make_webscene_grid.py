@@ -22,12 +22,12 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-IMG = ROOT / "data" / "raw" / "web_lab_scene" / "images"
-LBL = ROOT / "data" / "_prelabel" / "webscene_r1" / "labels"
-INDEX = ROOT / "outputs" / "web_lab_scene_review" / "index.txt"
 
 CLS = {0: "person", 1: "mask", 2: "gloves", 3: "lab_coat", 4: "goggles"}
 COLOR = {0: (0, 200, 0), 1: (0, 0, 235), 2: (235, 140, 0), 3: (200, 0, 200), 4: (0, 200, 255)}
+
+# 批次路径（main 里按 --batch 填充）
+IMG = LBL = INDEX = None
 
 
 def imread_u(p: Path):
@@ -48,13 +48,20 @@ def read_index():
 
 
 def main():
+    global IMG, LBL, INDEX
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--nos", default="", help="逗号分隔编号")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--width", type=int, default=1200)
     ap.add_argument("--no-grid", action="store_true", help="不叠加坐标网格（抽查看图用）")
+    ap.add_argument("--batch", default="", help="批次后缀，如 r2 → review_r2 / webscene_r2 / images_r2")
     args = ap.parse_args()
+
+    _b = f"_{args.batch}" if args.batch else ""
+    IMG = ROOT / "data" / "raw" / "web_lab_scene" / f"images{_b}"
+    LBL = ROOT / "data" / "_prelabel" / f"webscene{_b}" / "labels"
+    INDEX = ROOT / "outputs" / f"web_lab_scene_review{_b}" / "index.txt"
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
