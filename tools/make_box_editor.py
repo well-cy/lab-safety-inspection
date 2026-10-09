@@ -24,7 +24,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass  # 已是 utf-8 或被宿主接管
 
 ROOT = Path(__file__).resolve().parents[1]
 
