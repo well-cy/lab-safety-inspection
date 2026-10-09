@@ -62,8 +62,13 @@ for n in sorted(idx):
 
 title = args.title or f"web_lab_scene 修框抽查 · 共 {n_total} 张（{box_total} 框）"
 tips = args.tips or (
-    "图上为<b>修后预标注框</b>（绿=person 红=mask 橙=gloves 紫=lab_coat 黄=goggles，编号=框序）。"
-    "点图放大看细节。<b>回报方式：按编号说</b>，如「1 中间女生B大褂框多了」「15 手套框偏了」「33 OK」。")
+    "图上为<b>修后预标注框</b>，每个框左上角都标了 <b>类别名#框序</b>（如 gloves#12）。"
+    "颜色对照：<b style='color:#00c800'>绿 person</b> · <b style='color:#eb0000'>红 mask</b> · "
+    "<b style='color:#008ceb'>蓝 gloves</b> · <b style='color:#c800c8'>紫 lab_coat</b> · "
+    "<b style='color:#ffc800'>黄 goggles</b>。<br>"
+    "点图放大看细节。<b>回报方式：按编号说</b>，如「4 女生大褂没框」「9 护目镜没标」「14 口罩漏了」。"
+    "<br><span style='color:#70757a'>说明：保存的标签文件（.txt）里类别以数字 id 记录 "
+    "（person=0 mask=1 gloves=2 lab_coat=3 goggles=4），渲染/推理时会自动映射成上面的类别名，不会丢名字。</span>")
 
 html = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">

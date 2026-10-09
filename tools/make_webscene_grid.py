@@ -106,8 +106,16 @@ def main():
             x1 = int((cx - bw / 2) * w * z); y1 = int((cy - bh / 2) * h * z)
             x2 = int((cx + bw / 2) * w * z); y2 = int((cy + bh / 2) * h * z)
             cv2.rectangle(big, (x1, y1), (x2, y2), COLOR[c], 2)
-            cv2.putText(big, f"{i}{CLS[c][:2]}", (x1 + 2, max(12, y1 + 14)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR[c], 2)
+            # 标签：完整类别名 + 框序，彩字 + 白色描边（不用黑底）
+            label = f"{CLS[c]}#{i}"
+            fs = max(0.5, 0.00055 * big.shape[1])
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)
+            ty = y1 - th - 8
+            if ty < 0:
+                ty = y1 + 2
+            pos = (x1 + 4, ty + th + 3)
+            cv2.putText(big, label, pos, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 6)
+            cv2.putText(big, label, pos, cv2.FONT_HERSHEY_SIMPLEX, fs, COLOR[c], 2)
         hdr = f"#{n} {name} | orig {w}x{h} | boxes={len(rows)}"
         hb = np.zeros((30, big.shape[1], 3), np.uint8) + 30
         cv2.putText(hb, hdr[:150], (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 255), 1)
