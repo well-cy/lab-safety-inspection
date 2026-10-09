@@ -88,6 +88,11 @@ def series_of(stem: str) -> str:
         return stem            # r2：19 张批内互不近重复（审计②），按张独立划分
     if stem.startswith("img_"):
         return stem            # uploads 第 0 批：批内 0 近重复，按张独立划分
+    if stem.startswith("r3s_"):
+        return stem            # r3 截图组：批内 0 近重复，按张独立划分
+    if stem.startswith("r3u_"):
+        slug = stem.split("_", 2)[2]          # r3u_NN_<摄影师/机构 slug>
+        return "r3u_" + slug.split("-")[0]    # chiang-8 / chiang-f 视为同源整组
     base = stem.split("_来自小红书")[0]
     m = re.match(r"^_(\d+)_(.+)$", base)      # 形如 _1_青春药发光
     if m:
@@ -135,15 +140,37 @@ def main() -> int:
     ser = collections.defaultdict(list)
     for it in items:
         ser[it["series"]].append(it)
-    order = sorted(ser, key=lambda s: (len(ser[s]), s))
+
+    def family_of(s: str) -> str:
+        """来源族（批次前缀/截图 vs 高清），用于 valid 分层：防止 valid 全落在
+        字母序靠前的同一族里（例：r3 若按旧规则 valid 会全是 500px 截图）。"""
+        return s.split("_", 1)[0]
+
+    fam = collections.defaultdict(list)
+    for s in ser:
+        fam[family_of(s)].append(s)
+    for f in fam:
+        fam[f].sort(key=lambda s: (len(ser[s]), s))
+
     target = round(len(items) * VALID_RATIO)
     valid_ser, tot = [], 0
-    for s in order:
-        if tot + len(ser[s]) > target and tot > 0:
-            continue
-        valid_ser.append(s)
-        tot += len(ser[s])
-        if tot >= target:
+    fams = sorted(fam)
+    idx = 0
+    while tot < target:
+        progressed = False
+        for f in fams:
+            if idx >= len(fam[f]):
+                continue
+            s = fam[f][idx]
+            if tot + len(ser[s]) > target and tot > 0:
+                continue
+            valid_ser.append(s)
+            tot += len(ser[s])
+            progressed = True
+            if tot >= target:
+                break
+        idx += 1
+        if not progressed:
             break
     for it in items:
         it["split"] = "valid" if it["series"] in valid_ser else "train"

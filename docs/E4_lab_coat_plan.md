@@ -269,6 +269,27 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 - 批次增强：mask +3、gloves +13、lab_coat +20、goggles +4（四类共 40 框），外加 21 个 person 框存档。
 - 工具增强：`import_webscene_batch.py` 增 `--src/--lbl/--index/--arch/--manifest/--prefix`（可入任意批次）+ 写 manifest 前自动建父目录。
 
+### B+12. 网图 r3 批次（40 张收图 → 35 张入库，全人工标注）（2026-10-09，负责人：许婧雯）
+
+她放入 `data/raw/web_lab_scene/images/`：**17 张 unsplash 高清图**（NIH / NCI / NIAID 官方图，2811~9032px，另含 kelly-chiang、diana-hauan、hush-naidoo、muhammad-syafi 等摄影师图）+ `images/Screenshots/` **23 张 png 截图**（~500×350）。`tools/stage_webscene_r3.py` 收进 `images_r3/`（PNG→JPG q92、ASCII 改名 `r3u_NN_slug` / `r3s_NN_hhmmss`，**复制不移动**，溯源 `stage_manifest_r3.csv`）。
+
+**① 分诊剔除**：#6（影棚纯灰背景人像）/ #18（人像棚拍风）/ #19（黑白照）→ 她拍板剔除；修框轮 1 又剔 #4（错误过多）。**编号保留留洞**（1-5、7-17、20-40）。
+
+**② 预标注失败 → 全转人工**：`prelabel_generic.py --tag webscene_r3` 出 40 图/191 框（person62/mask10/gloves61/lab_coat38/goggles20），但质量差（模型=labppe_v8s + yolov8n 轻量半成品权重，域外+500px 小目标基本看不见）。两轮 AI 修框（`apply_webscene_fix_r3a/r3b/r3c.py`）后她判定"错误太多"，**拍板 36 张全部人工框选**。`make_box_editor.py` 为此升级：`--max-side` 自动生成 2400px 预览缩图（9000px 原图不再卡浏览器，坐标仍按原图归一化）、上/下一张按钮 + ←→ 快捷键、下拉显示框数。她用 `editor.html` 一次交付 **36 张 / 201 框**，`import_manual_boxes.py --batch r3` 落盘（备份 `data/_label_backup/webscene_r3_manual_20261009/`）。**口径确认：38/39 的普通眼镜不算 goggles，不标**（维持既有口径，避免污染）。
+
+**③ 四关审计（`tools/audit_webscene_batch.py --tag r3`，报告 `data/webscene_batch_audit_r3.txt`）**：
+- ① dataset1（7,401）/ dataset2 红线（251）**0 命中**；主库命中 **1 对：#14 r3s_14_130938 ↔ train/lcsi_27 dist=6**（同一张 stock 照片，持写字板蓝手套男生）。
+- ② 批内近重复 **1 对：#7 r3s_07_130425 ↔ #27 r3u_04_chiang-f（dist=0，同一照片的 513px 截图 vs 7360px 原图）**。
+- ③ 脏图 35/35 ok；④ 几何 196 框 0 问题。
+- **她拍板方案 B**：剔 #7（保留高清 #27，标注相同）；**保留 #14**（标注更全：2 person + 2 lab_coat + gloves + goggles，优于 lcsi 单类版），把 `lcsi_27_jpg.rf.f79da049…` 记入 lcsi 专项审计待剔清单（`outputs/lcsi_audit_pending.txt`）。#7 图+标签移入 `data/_rejected/web_lab_scene_r3_20261009/`。
+
+**④ 入库执行（`tools/import_webscene_batch.py --prefix websr3`）**：剩 **35 图 / 196 框**（person 48 / mask 12 / gloves 56 / lab_coat 44 / goggles 36）→ person 48 框丢弃（5 类草稿存档 `labels_5cls/`）；**train +30 / valid +5**，不进 test；命名 `websr3_<编号>_<md5[:8]>.jpg`，溯源 `import_manifest_r3.csv`，撞名 0。
+- **同源分组**：r3 新增 `series_of` 分支——截图 `r3s_*` 按张独立（审计②证明 0 近重复）；高清 `r3u_*` 按摄影师/机构 slug 归组（`chiang-8`/`chiang-f` 同组），组内整组同 split 防泄漏。
+- **划分算法改进**：valid 选择改为**按来源族轮转**（此前按字母序取前 N，r3 会导致 valid 全是 500px 截图）；现在 valid = 3 截图 + 2 高清，跨两个域。r2/uploads 回归无变化。
+
+- **执行后底座（B+12 落地）**：**train 1,444 图 / 4,674 框（mask 506 / gloves 1,805 / lab_coat 1,736 / goggles 627）；valid 264 图 / 888 框（mask 87 / gloves 353 / lab_coat 313 / goggles 135）；test 732 图 / 584 框未动**。全库 **2,440 图 / 6,146 框**，0 坏行、0 跨 split 重名、0 孤儿标签。
+- 批次增强：mask +12、gloves +56、lab_coat +44、goggles +36（四类共 148 框），外加 48 个 person 框存档。
+
 ### B++. 其余三类标注审计结果（2026-09-21，`tools/audit_lab_ppe_boxes.py`）
 
 对 `data/lab_ppe` 全部四类做几何审计（越界/超小/超大/极端宽高比/重复框/非法值），并按类别抽检画框：
