@@ -73,7 +73,16 @@ def main() -> int:
     ap.add_argument("--tag", default="p0_a")
     ap.add_argument("--max-side", type=int, default=1600)
     ap.add_argument("--out", default="")
+    ap.add_argument("--exclude-export", default="",
+                    help="编辑器导出 txt；其中 ### 列出的图视为已完成，从队列剔除")
     args = ap.parse_args()
+
+    excl: set[str] = set()
+    if args.exclude_export:
+        for ln in Path(args.exclude_export).read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln.startswith("###"):
+                excl.add(ln[3:].strip())
 
     # 网图批（已有精修 person）排除
     webs = {Path(f).stem for f in Path(ROOT / WEBS).glob("*.txt")}
@@ -87,7 +96,7 @@ def main() -> int:
     items = []          # (stem, ip, n_ppe)
     for ip in sorted((LAB / "images" / args.split).glob("*")):
         stem = ip.stem
-        if stem in webs:
+        if stem in webs or stem in excl:
             continue
         lf = LAB / "labels" / args.split / (stem + ".txt")
         rows = [l.split() for l in lf.read_text(encoding="utf-8").splitlines() if l.strip()] if lf.exists() else []

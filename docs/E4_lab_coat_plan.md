@@ -371,6 +371,14 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 
 **执行后底座（B+14 落地）**：**train 891 图 / 3,538 框（person 141 / mask 360 / gloves 1,305 / lab_coat 1,187 / goggles 545）；valid 222 图 / 881 框（person 25 / mask 87 / gloves 353 / lab_coat 281 / goggles 135）；test 732 图 / 584 框未动（mask 59 / gloves 122 / lab_coat 37 / goggles 366）**。全库 **1,845 图 / 5,003 框**（person 166 / mask 506 / gloves 1,780 / lab_coat 1,505 / goggles 1,046），0 坏行、0 跨 split 重名、0 孤儿。
 
+### B+15. person 补标第一批落库（2026-10-10，负责人：许婧雯）
+
+**流程**：`make_person_review.py` 生成 P0 批 p0_a（train 有 PPE 框队列前 60 图，现有五类框实线 + COCO person 候选 conf≥0.40 虚线）→ 编辑器修复两处（① 库内 cxcywh 直接喂左上角 xywh 编辑器导致**所有框右下偏移半框**，已加转换；② 候选框虚线 + "候选"前缀与旧标注区分）→ 她逐图确认，36 图有改动导出（编辑器只导出 dirty 图）→ 新工具 **`tools/apply_person_review.py`** 落库（整图覆盖、越界裁剪、全库校验）。
+
+**处置**：36 图整图覆盖入库；其中 10 张（F 系列）她误删的护目镜框**按库内原框恢复**，M15 的台面普通眼镜框按"未佩戴不标"口径**保持删除**；合并净效果 = 新增 person 40（候选人工确认）、goggles -11+10、mask -1、gloves -8（重复合并）、lab_coat 若干框拉正。**重复副本一律不剔**（含 test 44 张挂起，维持现状）。
+
+**执行后底座（B+15 落地）**：**train 891 图 / 3,568 框（person 181 / mask 359 / gloves 1,297 / lab_coat 1,187 / goggles 544）；valid 222/881、test 732/584 不变**。全库 **1,845 图 / 5,033 框**（person 206 / mask 505 / gloves 1,772 / lab_coat 1,505 / goggles 1,045），0 坏行、0 孤儿。落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261010.tar.gz`（891 文件）。person 审查队列 786→750，下一批 p0_b 已生成（`--exclude-export` 自动剔除已完成图）。
+
 ---
 
 ## C. 增训方案
