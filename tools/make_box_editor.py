@@ -365,7 +365,11 @@ def main():
             for ln in lp.read_text(encoding="utf-8").splitlines():
                 if ln.strip():
                     q = ln.split()
-                    rows.append([int(q[0])] + [round(float(v), 6) for v in q[1:5]])
+                    # 预标注文件是 YOLO cxcywh（中心式），编辑器内部用左上角 xywh，必须转换
+                    c, cx, cy, bw, bh = int(q[0]), *[float(v) for v in q[1:5]]
+                    rows.append([c, round(min(max(cx - bw / 2, 0.0), 1.0), 6),
+                                 round(min(max(cy - bh / 2, 0.0), 1.0), 6),
+                                 round(bw, 6), round(bh, 6)])
         imgs.append({
             "no": n, "name": name,
             "path": "file:///" + str(vp).replace("\\", "/"),

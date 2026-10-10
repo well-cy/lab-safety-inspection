@@ -140,9 +140,16 @@ def main() -> int:
         (ws / (stem + ".txt")).write_text(
             "\n".join(" ".join(str(v) for v in r) for r in merged) + ("\n" if merged else ""),
             encoding="utf-8", newline="\n")
+        # 注意：库内/prelabel 标签 = YOLO cxcywh（中心式），编辑器内部 = 左上角 xywh。
+        # 不转换会让每个框整体右下偏移半个框（表现为"所有框都是偏的"）。这里做 cxcywh → xywh。
+        edit_boxes = []
+        for c, cx, cy, bw, bh in merged:
+            x = min(max(cx - bw / 2, 0.0), 1.0)
+            y = min(max(cy - bh / 2, 0.0), 1.0)
+            edit_boxes.append([c, round(x, 6), round(y, 6), round(bw, 6), round(bh, 6)])
         imgs.append({"no": i + 1, "name": ip.name,
                      "path": "file:///" + str(vp).replace("\\", "/"),
-                     "nw": vw, "nh": vh, "boxes": merged})
+                     "nw": vw, "nh": vh, "boxes": edit_boxes})
         index.append(f"{i + 1}\t{ip.name}\t{fam_of(stem)}\t{n_ppe}\t{len(cands)}")
 
     html = (HTML.replace("__TITLE__", f"person 补标 · 批 {args.tag} · {len(imgs)} 张")
