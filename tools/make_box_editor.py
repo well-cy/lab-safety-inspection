@@ -63,6 +63,8 @@ HTML = r"""<!DOCTYPE html>
  .bx.sel{border-width:3px;box-shadow:0 0 0 1px #fff inset}
  .bx.cand{border-style:dashed;opacity:.9}
  .bx.cand .lb{opacity:.85}
+ .bx.pend{border-style:dotted;border-color:#ff9f0a;box-shadow:0 0 0 1px #ff9f0a88}
+ .bx.pend .lb{background:#ff9f0a !important;color:#000 !important}
  .bx .lb{position:absolute;top:-19px;left:-2px;font-size:11px;color:#000;padding:0 4px;border-radius:3px 3px 0 0;
          white-space:nowrap;font-weight:700}
  .bx .x{position:absolute;top:-19px;right:-2px;font-size:13px;line-height:16px;width:16px;height:16px;
@@ -198,10 +200,10 @@ function render(){
   layer.innerHTML='';
   im.boxes.forEach((b,i)=>{
     const d=document.createElement('div');
-    d.className='bx'+(i===sel?' sel':'')+(b.cand?' cand':'');
+    d.className='bx'+(i===sel?' sel':'')+(b.cand===2?' pend':(b.cand?' cand':''));
     d.dataset.i=i;
     d.style.borderColor=COLORS[b.c];
-    d.innerHTML='<span class="lb" style="background:'+COLORS[b.c]+'">'+(b.cand?'候选 ':'')+NAMES[b.c]+'#'+i+
+    d.innerHTML='<span class="lb" style="background:'+COLORS[b.c]+'">'+(b.cand===2?'★待确认 ':(b.cand?'候选 ':''))+NAMES[b.c]+'#'+i+
                 '</span><b class="x" title="删除">×</b><i class="h"></i>';
     layer.appendChild(d);
     place(d,b,im);
