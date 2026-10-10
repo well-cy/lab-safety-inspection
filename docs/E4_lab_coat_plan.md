@@ -361,6 +361,16 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 
 **执行后底座（B+13 落地）**：**train 1,200 图 / 4,480 框（mask 506 / gloves 1,804 / lab_coat 1,544 / goggles 626）；valid 222 图 / 856 框（mask 87 / gloves 353 / lab_coat 281 / goggles 135）；test 732 图 / 584 框未动**。全库 **2,154 图 / 5,920 框**（mask 652 / gloves 2,279 / lab_coat 1,862 / goggles 1,127），0 坏行、0 跨 split 重名、0 孤儿。lcsi 占比从 17.7% 图/6.7% 框降到 6.7% 图/3.2% 框，域失真显著缓解。可回收：`_rejected/lcsi_prune_20261009/` 整体移回即可（毒点 3 张如需保留须先补标）。
 
+### B+14. 同源增强副本去重（2026-10-10，负责人：许婧雯）
+
+**背景**：全库五类化迁移 + 增强数据审查时发现大量"同一张图换色 / 左右翻转"被 Roboflow 增强当作新样本（特征：同基础名 + 不同 `.rf.<hash>` 后缀），既虚增数据量、又让 valid 与 train 隐性同图（泄漏），还会污染 person 补标审查队列。
+
+**工具**（`tools/dedup_aug_dups.py`，判决报告 `data/aug_dup_report.txt`、对照图版 `tools/make_dup_conflict_sheet.py`）：三路感知哈希（灰度 / 梯度幅值 × 原图 / 水平镜像，取 min 汉明距离）**只在同 `.rf.` 基础名组内**判冗余（避免 ppes_* CCTV 连续帧被误串成大组），配合 `best_kind()` 对 identity / fliph / flipv / rot180 变换后的 IoU 覆盖率与**灰度像素平均绝对差闸门**（防哈希把灰度副本误判为不同图），输出 8 类判决：`keep / drop_subset`（标签被代表完全覆盖=纯冗余）/ `drop_empty`（同源空标签副本=背景毒点）/ `drop_broken`（图像被镜像但标签未镜像=标注错位毒数据）/ `review_extra / review_class_conflict / review_pixel_diff`（两版标注矛盾，人工拍板）/ `keep_far`。
+
+**结果**：全库 1,845 张扫描 → 唯一基础名 1,776、同源多副本基础名 65。**剔除 309 张（train）→ 移动到 `data/_rejected/aug_dup_20261010/`（manifest `_prune_manifest.csv` 可逆回）**；**test 侧 44 张冗余副本挂起**于 `data/_aug_dup_held.txt`（动 test = 改评测口径，待单独拍板，未动）；**19 项标注冲突**（18 `review_extra` + 1 `review_class_conflict`）生成 7 版对照图版 `outputs/aug_dup_review/conflict/` 供人工拍板，**未自动剔**。去重后 person 审查队列由 1,095 降到 786（-28%）。
+
+**执行后底座（B+14 落地）**：**train 891 图 / 3,538 框（person 141 / mask 360 / gloves 1,305 / lab_coat 1,187 / goggles 545）；valid 222 图 / 881 框（person 25 / mask 87 / gloves 353 / lab_coat 281 / goggles 135）；test 732 图 / 584 框未动（mask 59 / gloves 122 / lab_coat 37 / goggles 366）**。全库 **1,845 图 / 5,003 框**（person 166 / mask 506 / gloves 1,780 / lab_coat 1,505 / goggles 1,046），0 坏行、0 跨 split 重名、0 孤儿。
+
 ---
 
 ## C. 增训方案
