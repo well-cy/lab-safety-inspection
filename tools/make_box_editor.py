@@ -61,6 +61,8 @@ HTML = r"""<!DOCTYPE html>
  #layer{position:absolute;inset:0}
  .bx{position:absolute;border:2px solid #0f0;cursor:move;box-sizing:border-box}
  .bx.sel{border-width:3px;box-shadow:0 0 0 1px #fff inset}
+ .bx.cand{border-style:dashed;opacity:.9}
+ .bx.cand .lb{opacity:.85}
  .bx .lb{position:absolute;top:-19px;left:-2px;font-size:11px;color:#000;padding:0 4px;border-radius:3px 3px 0 0;
          white-space:nowrap;font-weight:700}
  .bx .x{position:absolute;top:-19px;right:-2px;font-size:13px;line-height:16px;width:16px;height:16px;
@@ -116,7 +118,7 @@ const NAMES={0:'person',1:'mask',2:'gloves',3:'lab_coat',4:'goggles'};
 const DATA=__DATA__;
 
 let imgs=DATA.imgs.map(o=>({name:o.name,path:o.path,nw:o.nw,nh:o.nh,
-  boxes:o.boxes.map(b=>({c:b[0],x:b[1],y:b[2],w:b[3],h:b[4]}))}));
+  boxes:o.boxes.map(b=>({c:b[0],x:b[1],y:b[2],w:b[3],h:b[4],cand:b[5]||0}))}));
 const orig=JSON.parse(JSON.stringify(imgs));
 const dirty={};
 let cur=DATA.focus||0, cls=1, z=1, sel=-1, drag=null;
@@ -196,10 +198,10 @@ function render(){
   layer.innerHTML='';
   im.boxes.forEach((b,i)=>{
     const d=document.createElement('div');
-    d.className='bx'+(i===sel?' sel':'');
+    d.className='bx'+(i===sel?' sel':'')+(b.cand?' cand':'');
     d.dataset.i=i;
     d.style.borderColor=COLORS[b.c];
-    d.innerHTML='<span class="lb" style="background:'+COLORS[b.c]+'">'+NAMES[b.c]+'#'+i+
+    d.innerHTML='<span class="lb" style="background:'+COLORS[b.c]+'">'+(b.cand?'候选 ':'')+NAMES[b.c]+'#'+i+
                 '</span><b class="x" title="删除">×</b><i class="h"></i>';
     layer.appendChild(d);
     place(d,b,im);

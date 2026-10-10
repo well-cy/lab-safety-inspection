@@ -136,17 +136,19 @@ def main() -> int:
                 if j < len(cf) and cf[j] >= args.conf_min:
                     cands.append(["0"] + [f"{float(v):.6f}" for v in r[1:5]])
         merged = [[int(r[0])] + [round(float(v), 6) for v in r[1:5]] for r in rows]
-        merged += [[int(r[0])] + [round(float(v), 6) for v in r[1:5]] for r in cands]
+        cand_rows = [[0] + [round(float(v), 6) for v in r[1:5]] for r in cands]
         (ws / (stem + ".txt")).write_text(
-            "\n".join(" ".join(str(v) for v in r) for r in merged) + ("\n" if merged else ""),
+            "\n".join(" ".join(str(v) for v in r) for r in merged + cand_rows)
+            + ("\n" if merged or cand_rows else ""),
             encoding="utf-8", newline="\n")
         # 注意：库内/prelabel 标签 = YOLO cxcywh（中心式），编辑器内部 = 左上角 xywh。
         # 不转换会让每个框整体右下偏移半个框（表现为"所有框都是偏的"）。这里做 cxcywh → xywh。
-        edit_boxes = []
-        for c, cx, cy, bw, bh in merged:
+        # 第 6 位 cand：1=COCO 候选（编辑器画虚线+「候选」前缀），0=库内原有标注。
+        def _xywh(c, cx, cy, bw, bh, cand):
             x = min(max(cx - bw / 2, 0.0), 1.0)
             y = min(max(cy - bh / 2, 0.0), 1.0)
-            edit_boxes.append([c, round(x, 6), round(y, 6), round(bw, 6), round(bh, 6)])
+            return [c, round(x, 6), round(y, 6), round(bw, 6), round(bh, 6), cand]
+        edit_boxes = [_xywh(*b, 0) for b in merged] + [_xywh(*b, 1) for b in cand_rows]
         imgs.append({"no": i + 1, "name": ip.name,
                      "path": "file:///" + str(vp).replace("\\", "/"),
                      "nw": vw, "nh": vh, "boxes": edit_boxes})
