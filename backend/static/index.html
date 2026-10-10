@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>实验室安全智能巡检与违规预警系统</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<!-- 图表库：优先使用本地副本（离线可用），加载失败再回退 CDN -->
+<script src="/static/vendor/echarts.min.js"></script>
+<script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
 <style>
 :root{--primary:#1f6feb;--danger:#e5484d;--warn:#f59e0b;--ok:#2ea043;--bg:#f5f7fa;--card:#fff;--text:#1f2328;--muted:#6a737d;--border:#e4e7eb}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -207,13 +209,16 @@ async function runInspect(){
   const lab=$('i-lab').value;
   const fd=new FormData();
   fd.append('file',f); fd.append('lab_id',lab);
-  const isVideo=f.type.startsWith('video')||/\.(mp4|avi|mov)$/i.test(f.name);
+  const isVideo=f.type.startsWith('video')||/\.(mp4|avi|mov|mkv)$/i.test(f.name);
+  if(f.size>200*1024*1024){alert('文件过大（>200MB），请换小一点的文件');return}
   $('i-run').disabled=true;
-  $('i-status').textContent=isVideo?'⏳ 视频处理中（GPU 推理，请耐心等待）…':'⏳ 处理中…';
+  $('i-status').textContent=isVideo?'⏳ 视频处理中（CPU 逐帧推理，请耐心等待）…':'⏳ 处理中…';
   $('i-result-card').style.display='none';
   try{
-    const r=await (await fetch(api+`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd})).json();
+    const res=await fetch(api+`/api/detect/${isVideo?'video':'image'}`,{method:'POST',body:fd});
+    const r=await res.json().catch(()=>({error:'服务器返回异常（HTTP '+res.status+'）'}));
     if(r.error)throw r.error;
+    if(!res.ok)throw 'HTTP '+res.status;
     if(isVideo)renderVideoResult(r); else renderImageResult(r);
     $('i-result-card').style.display='block';
     $('i-status').textContent='✅ 完成';
@@ -319,7 +324,9 @@ async function createArea(){
   fd.append('lab_id',$('s-lab').value); fd.append('name',$('s-areaname').value);
   ['x1','y1','x2','y2'].forEach(k=>fd.append(k,$('s-'+k).value));
   fd.append('required_ppe',[...document.querySelectorAll('.s-ppe:checked')].map(c=>c.value).join(','));
-  await fetch(api+'/api/settings/area',{method:'POST',body:fd});
+  const res=await fetch(api+'/api/settings/area',{method:'POST',body:fd});
+  const r=await res.json().catch(()=>({error:'服务器返回异常（HTTP '+res.status+'）'}));
+  if(r.error){alert('创建失败：'+r.error);return}
   $('s-areaname').value=''; loadSettings();
 }
 async function deleteArea(id){

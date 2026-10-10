@@ -34,7 +34,73 @@ OUT_VID_DIR = ROOT / "outputs" / "videos"
 for d in (UPLOAD_DIR, OUT_IMG_DIR, OUT_VID_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
+# 上传与配置校验白名单（防止无效输入触发 500）
+ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+ALLOWED_VID_EXT = {".mp4", ".avi", ".mov", ".mkv"}
+ALLOWED_PPE = {"mask", "gloves", "lab_coat", "goggles", "helmet"}
+
 app = FastAPI(title="实验室安全智能巡检与违规预警系统", version="0.1.0-MVP")
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception(request, exc):
+    """兜底：任何未预期异常返回结构化 JSON，避免前端拿到非 JSON 的 500 文本"""
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        {"error": f"服务器内部错误（{type(exc).__name__}）：{exc}"}, status_code=500)
+
+
+# ---------- 输入校验辅助 ----------
+def _lab_exists(lab_id: int) -> bool:
+    conn = db.get_conn()
+    try:
+        return conn.execute("SELECT 1 FROM laboratories WHERE id=?",
+                            (lab_id,)).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _save_upload(file: UploadFile, save_path: Path) -> int:
+    """流式落盘，返回字节数"""
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return save_path.stat().st_size
+
+
+def _safe_unlink(path: Path):
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _readable_image(path: Path) -> bool:
+    """能否作为图片解码（拒绝伪装扩展名的文本/空文件）"""
+    try:
+        import cv2
+        import numpy as np
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size == 0:
+            return False
+        return cv2.imdecode(data, cv2.IMREAD_COLOR) is not None
+    except Exception:
+        return False
+
+
+def _readable_video(path: Path) -> bool:
+    """能否作为视频打开且有可读帧"""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(path))
+        ok = cap.isOpened()
+        if ok:
+            ret, _ = cap.read()
+            ok = bool(ret)
+        cap.release()
+        return ok
+    except Exception:
+        return False
 
 _detector = None
 _pipeline = None        # 视频管线（快速，无切片复检）
@@ -127,17 +193,35 @@ def violations(vtype: str | None = None, severity: str | None = None,
 # ---------- 检测：图片 ----------
 @app.post("/api/detect/image")
 async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
+    suffix = (Path(file.filename or "upload.jpg").suffix or ".jpg").lower()
+    if suffix not in ALLOWED_IMG_EXT:
+        return JSONResponse(
+            {"error": f"不支持的图片格式 {suffix}，请上传 jpg / jpeg / png / bmp / webp"},
+            status_code=400)
+    if not _lab_exists(lab_id):
+        return JSONResponse(
+            {"error": f"实验室 id={lab_id} 不存在，请先在“系统设置”中创建实验室"},
+            status_code=400)
+
     pipeline = get_image_pipeline()
-    suffix = Path(file.filename or "upload.jpg").suffix or ".jpg"
     save_path = UPLOAD_DIR / f"img_{uuid.uuid4().hex[:8]}{suffix}"
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    size = _save_upload(file, save_path)
+    if size == 0:
+        _safe_unlink(save_path)
+        return JSONResponse({"error": "上传文件为空，请选择有效的图片文件"}, status_code=400)
+    if not _readable_image(save_path):
+        _safe_unlink(save_path)
+        return JSONResponse({"error": "无法解析该文件为图片，请确认上传的是有效图片"}, status_code=400)
 
     areas = db.load_areas(lab_id)
     from video.processor import process_image
     out_name = f"annotated_{save_path.stem}.jpg"
-    result = process_image(pipeline, save_path, areas,
-                           save_path=OUT_IMG_DIR / out_name)
+    try:
+        result = process_image(pipeline, save_path, areas,
+                               save_path=OUT_IMG_DIR / out_name)
+    except ValueError as e:
+        _safe_unlink(save_path)
+        return JSONResponse({"error": f"图片处理失败：{e}"}, status_code=400)
 
     persons = result["person_states"]
     events = result["events"]
@@ -173,17 +257,37 @@ async def detect_image(file: UploadFile = File(...), lab_id: int = Form(1)):
 @app.post("/api/detect/video")
 async def detect_video(file: UploadFile = File(...), lab_id: int = Form(1),
                        stride: int = Form(2)):
+    suffix = (Path(file.filename or "upload.mp4").suffix or ".mp4").lower()
+    if suffix not in ALLOWED_VID_EXT:
+        return JSONResponse(
+            {"error": f"不支持的视频格式 {suffix}，请上传 mp4 / avi / mov / mkv"},
+            status_code=400)
+    if stride < 1:
+        return JSONResponse({"error": "抽帧步长 stride 必须 ≥ 1"}, status_code=400)
+    if not _lab_exists(lab_id):
+        return JSONResponse(
+            {"error": f"实验室 id={lab_id} 不存在，请先在“系统设置”中创建实验室"},
+            status_code=400)
+
     pipeline = get_pipeline()
-    suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
     save_path = UPLOAD_DIR / f"vid_{uuid.uuid4().hex[:8]}{suffix}"
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    size = _save_upload(file, save_path)
+    if size == 0:
+        _safe_unlink(save_path)
+        return JSONResponse({"error": "上传文件为空，请选择有效的视频文件"}, status_code=400)
+    if not _readable_video(save_path):
+        _safe_unlink(save_path)
+        return JSONResponse({"error": "无法打开该视频（无有效视频帧），请确认文件未损坏"}, status_code=400)
 
     areas = db.load_areas(lab_id)
     from video.processor import process_video
     out_name = f"annotated_{save_path.stem}.mp4"
-    result = process_video(pipeline, save_path, areas,
-                           OUT_VID_DIR / out_name, stride=stride)
+    try:
+        result = process_video(pipeline, save_path, areas,
+                               OUT_VID_DIR / out_name, stride=stride)
+    except ValueError as e:
+        _safe_unlink(save_path)
+        return JSONResponse({"error": f"视频处理失败：{e}"}, status_code=400)
 
     events = result["events"]
     record_id = db.save_detection_record(
@@ -221,10 +325,12 @@ def get_settings():
 
 @app.post("/api/settings/lab")
 async def create_lab(name: str = Form(...), description: str = Form("")):
+    if not name.strip():
+        return JSONResponse({"error": "实验室名称不能为空"}, status_code=400)
     conn = db.get_conn()
     try:
         conn.execute("INSERT INTO laboratories(name, description) VALUES(?,?)",
-                     (name, description))
+                     (name.strip(), description))
         conn.commit()
     except Exception:
         return JSONResponse({"error": "实验室名称已存在"}, status_code=400)
@@ -238,16 +344,39 @@ async def create_area(lab_id: int = Form(...), name: str = Form(...),
                       x1: float = Form(...), y1: float = Form(...),
                       x2: float = Form(...), y2: float = Form(...),
                       required_ppe: str = Form("mask,gloves,lab_coat")):
+    # ---- 输入校验（ROI 越界 / 反序 / 非法 PPE 类别 / 实验室不存在）----
+    if not name.strip():
+        return JSONResponse({"error": "区域名称不能为空"}, status_code=400)
+    for nm, v in (("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)):
+        if not (0.0 <= v <= 1.0):
+            return JSONResponse(
+                {"error": f"坐标 {nm}={v} 超出 0~1 归一化范围"}, status_code=400)
+    if x2 <= x1 or y2 <= y1:
+        return JSONResponse(
+            {"error": "ROI 需满足 x2>x1 且 y2>y1（按左上角→右下角顺序填写）"},
+            status_code=400)
+    ppe_list = [s.strip() for s in required_ppe.split(",") if s.strip()]
+    bad = [p for p in ppe_list if p not in ALLOWED_PPE]
+    if bad:
+        return JSONResponse(
+            {"error": f"不支持的 PPE 类别：{', '.join(bad)}"
+                      f"（可选：mask / gloves / lab_coat / goggles / helmet）"},
+            status_code=400)
+    if not _lab_exists(lab_id):
+        return JSONResponse({"error": f"实验室 id={lab_id} 不存在"}, status_code=400)
+
     conn = db.get_conn()
-    cur = conn.execute(
-        "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
-        (lab_id, name, x1, y1, x2, y2))
-    area_id = cur.lastrowid
-    for ppe in [s.strip() for s in required_ppe.split(",") if s.strip()]:
-        conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
-                     " VALUES(?,?,1)", (area_id, ppe))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.execute(
+            "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
+            (lab_id, name.strip(), x1, y1, x2, y2))
+        area_id = cur.lastrowid
+        for ppe in ppe_list:
+            conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
+                         " VALUES(?,?,1)", (area_id, ppe))
+        conn.commit()
+    finally:
+        conn.close()
     return {"ok": True, "area_id": area_id}
 
 
