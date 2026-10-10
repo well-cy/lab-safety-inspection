@@ -495,3 +495,19 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 
 **执行后底座（B+18 落地）**：**train 891 图 / 3,700 框（person 312 / mask 359 / gloves 1,298 / lab_coat 1,188 / goggles 543）**；valid 222/881、test 732/584 不变。全库 **1,845 图 / 5,165 框**（person 337 / mask 505 / gloves 1,773 / lab_coat 1,506 / goggles 1,044），0 坏行、0 孤儿。
 落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261010_224716.tar.gz`（891 文件）；已完成清单 96 → **156 图**。
+
+### B+19. person 补标第四批落库（p0_d，2026-10-10 深夜，负责人：许婧雯）
+
+她 23:00 贴回导出（36 图有改动），口径同前：「剩下没有改动的图片算上候选框都是正确的」→ 未改动即通过。
+
+- 60 图 = 导出 36 + 未改动采纳 24；**person +91**（train 312→403，本批为视频帧域，候选密集，人均 +2~3）；
+- **19 个非 person 框被她删除，逐框放大核实后全部判定为合理修正、直接落库**（未启用 `--keep-classes`）：
+  - 3191292 帧：goggles 框在未戴护目镜的脸上、gloves 框在裸手上（错误标注）；
+  - 3196600 / 4121322 的 gloves 小框：框在显微镜机身上，或为被保留大框套住的小重复框（合并去重）；
+  - 4121322-0000 的 lab_coat 框在戴口罩的脸部（错误标注）；
+  - 8381407 系列 8 帧：lab_coat 大框实为「人+显微镜」混框，她改标 person（跨帧一致的修正）；
+- 核实图版：`outputs/person_review_p0_d/_deleted_nonperson_check.jpg`；
+- 历史遗留重复框仍为 6 处（F16、k1、z42、3 张 istockphoto 帧），本批零新增，待统一清理。
+
+**执行后底座（B+19 落地）**：**train 891 图 / 3,777 框（person 403 / mask 359 / gloves 1,290 / lab_coat 1,181 / goggles 544）**；valid 222/881、test 732/584 不变。全库 **1,845 图 / 5,242 框**（person 428 / mask 505 / gloves 1,765 / lab_coat 1,499 / goggles 1,045），0 坏行、0 孤儿。
+落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261010_230422.tar.gz`（891 文件）；已完成清单 156 → **216 图**，队列 570 → **510**。
