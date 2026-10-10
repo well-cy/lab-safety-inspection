@@ -629,7 +629,7 @@ valid **262 图 / 1,256 框**（person 159 / mask 184 / gloves 471 / lab_coat 28
 
 **增量（59 图 vs 落库前备份）**：person +126、mask +6、gloves +18、lab_coat +5、goggles +23；剔除图另 -5 lab_coat。
 备份：`data/lab_ppe/_label_backup/labels_train_person_20261011_001404.tar.gz`（1,251 文件）。
-done 清单 336 → 395；P0 队列约 390 → 331。
+done 清单 336 → 395；剩余队列（p0_h 生成时统计）：751 图（P0 有PPE框 704 / P1 空标签 47）。
 
 **执行后底座（B+25 落地）**：**train 1,251 图 / 6,110 框（person 1,432 / mask 924 / gloves 1,883 / lab_coat 1,121 / goggles 750）**；
 valid 262/1,256、test 732/584 不变。全库 **2,245 图 / 7,950 框**（person 1,591 / mask 1,167 / gloves 2,476 /
