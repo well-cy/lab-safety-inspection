@@ -122,6 +122,10 @@ def main() -> int:
                 v = fit(draw(im.copy(), rows, col, tag))
                 sheet[ri * (CELL + 30):ri * (CELL + 30) + CELL,
                       ci * (CELL + 12):ci * (CELL + 12) + CELL] = v
+            # 每行左侧大编号角标（醒目红字黑描边，避免编号看不清）
+            bx, by = 12, ri * (CELL + 30) + 48
+            cv2.putText(sheet, f"#{no}", (bx + 2, by + 2), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 0, 0), 8)
+            cv2.putText(sheet, f"#{no}", (bx, by), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (0, 0, 220), 4)
         ok, buf = cv2.imencode(".jpg", sheet, [cv2.IMWRITE_JPEG_QUALITY, 88])
         if ok:
             (out_dir / f"conflict_{si + 1:02d}.jpg").write_bytes(buf.tobytes())
