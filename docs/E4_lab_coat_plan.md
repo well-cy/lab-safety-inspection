@@ -379,6 +379,34 @@ upload 原始 95 张，2026-10-08 分诊保留 43 张（草稿 `data/_prelabel/u
 
 **执行后底座（B+15 落地）**：**train 891 图 / 3,568 框（person 181 / mask 359 / gloves 1,297 / lab_coat 1,187 / goggles 544）；valid 222/881、test 732/584 不变**。全库 **1,845 图 / 5,033 框**（person 206 / mask 505 / gloves 1,772 / lab_coat 1,505 / goggles 1,045），0 坏行、0 孤儿。落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261010.tar.gz`（891 文件）。person 审查队列 786→750，下一批 p0_b 已生成（`--exclude-export` 自动剔除已完成图）。
 
+### B+16. person 补标第二批落库 + 口径变更（2026-10-10，负责人：许婧雯）
+
+**口径变更（她 22:22 明确）**：「剩下没有改动的图片加上候选都是正确的」——即**未改动图 = 通过**，
+其 person 候选整批采纳，不再要求逐图确认。此后每批只需回报**需要修改的图**（编辑器导出），
+未出现在导出里的图按「库内框 + 候选」直接落库。
+
+**批次**：p0_b 共 60 图（`outputs/person_review_p0_b/`）＝ 导出 22 图（她逐图改过）+ 未改动 38 图（采纳候选）。
+
+**工具增强**（落在 `tools/`，供后续批次复用）：
+- `apply_person_review.py`：`--keep-classes`（库内该类框被删则以原框保留，防误删；IoU<0.5 视为被删）、
+  `--accept-from-ws` + `--batch-index`（未改动图直接采用工作区标签＝库内+候选）、
+  `--done-file`（落库后追加"已完成清单"）、备份文件名改为**带时分秒**（原先只带日期，同日两批会互相覆盖）。
+- `make_person_review.py`：`--exclude-all`（自动排除所有 `outputs/person_review_*/_her_export.txt` 的已完成图）、
+  `--done-file`（读已完成清单）。已回填 `data/_person_review_done.txt` = p0_a 36 + p0_b 60 = **96 图**。
+
+**处置**：
+- 22 图整图覆盖入库，38 图采纳候选（每图各 +1 person 框）；
+- **防误删保留 7 个 lab_coat 框**（M61 / M67 / M77 / M78 / M82 / M85 / M8，导出中消失且与导出框 IoU<0.5）
+  —— 按 B+15 口径以库内原框保留，核实图版 `outputs/person_review_p0_b/_kept_labcoat_check.jpg`，
+  **待她复核：确认是误删（保留）还是有意删（再移除）**；
+- z13 两个高度重叠的 goggles 框（IoU 0.69）被她合并为 1 个，属实质修正，已落库；
+- 其余"删除+新增"实为坐标微调（删了又加回），非实质改动。
+
+**执行后底座（B+16 落地）**：**train 891 图 / 3,633 框（person 246 / mask 359 / gloves 1,297 / lab_coat 1,188 / goggles 543）；valid 222/881、test 732/584 不变**。全库 **1,845 图 / 5,098 框**（person 271 / mask 505 / gloves 1,772 / lab_coat 1,506 / goggles 1,044），0 坏行、0 孤儿。
+净效果 = **person +65**、lab_coat +1（保留的 7 个 − 6 个待复核删除 + M8 新增 1）、goggles −1（z13 合并）。
+落库前备份 `data/lab_ppe/_label_backup/labels_train_person_pre_p0b_20261010_2225.tar.gz`（891 文件）。
+**person 审查队列 786 → 690**，下一批 `p0_c` 已生成（60 图，起始为 z 系列）。
+
 ---
 
 ## C. 增训方案

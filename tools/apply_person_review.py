@@ -7,6 +7,13 @@
 用法:
   $PY tools/apply_person_review.py --export outputs/person_review_p0_a/_her_export.txt \
       --restore-stems "stem1,stem2,..."        # 这些图恢复库内 class-4（护目镜）框
+  $PY tools/apply_person_review.py --export outputs/person_review_p0_b/_her_export.txt \
+      --keep-classes 3                         # 库内 class-3(lab_coat) 框被删则以原框保留（防误删）
+  $PY tools/apply_person_review.py --export outputs/person_review_p0_b/_her_export.txt \
+      --accept-from-ws data/_prelabel/person_p0_b/labels \
+      --batch-index outputs/person_review_p0_b/index.txt
+                                               # 她回「未改动的图+候选都对」时：
+                                               # 批次内未出现在导出中的图，直接采用工作区标签（库内+候选）
 可选:
   --split train            落库 split
   --no-backup              跳过 tar 备份（默认全量备份 labels/ 到 _label_backup/）
@@ -61,23 +68,70 @@ def near(a, b, eps=1e-4):
     return a[0] == b[0] and all(abs(a[k] - b[k]) < eps for k in range(1, 5))
 
 
+def iou(a, b) -> float:
+    ax1, ay1, ax2, ay2 = a[1] - a[3] / 2, a[2] - a[4] / 2, a[1] + a[3] / 2, a[2] + a[4] / 2
+    bx1, by1, bx2, by2 = b[1] - b[3] / 2, b[2] - b[4] / 2, b[1] + b[3] / 2, b[2] + b[4] / 2
+    ix = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    iy = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = ix * iy
+    u = a[3] * a[4] + b[3] * b[4] - inter
+    return inter / u if u > 0 else 0.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--export", required=True)
     ap.add_argument("--split", default="train")
     ap.add_argument("--restore-stems", default="")
+    ap.add_argument("--keep-classes", default="",
+                    help="库内这些类的框若在导出中消失（IoU<0.5 视为被删）则以原框保留，防误删")
+    ap.add_argument("--accept-from-ws", default="",
+                    help="工作区标签目录；批次内未出现在导出中的图直接采用其内容（库内+候选）")
+    ap.add_argument("--batch-index", default="", help="批次 index.txt，用于确定批次图集")
+    ap.add_argument("--done-file", default="data/_person_review_done.txt",
+                    help="已完成（已落库）图清单，追加式；空串则跳过")
     ap.add_argument("--no-backup", action="store_true")
     ap.add_argument("--dry", action="store_true")
     args = ap.parse_args()
 
     exp = parse_export(Path(args.export).read_text(encoding="utf-8"))
     restore = {s.strip() for s in args.restore_stems.split(",") if s.strip()}
+    keep = {int(x) for x in args.keep_classes.split(",") if x.strip()}
     LBL = LAB / "labels" / args.split
+
+    # ---- 待落库计划：导出图 + 批次内未改动图（采用工作区标签） ----
+    plan: dict[str, list[tuple]] = {k: list(v) for k, v in exp.items()}
+    accepted: list[str] = []
+    if args.accept_from_ws and args.batch_index:
+        ws_dir = Path(args.accept_from_ws)
+        if not ws_dir.is_absolute():
+            ws_dir = ROOT / ws_dir
+        stems = []
+        for ln in Path(args.batch_index).read_text(encoding="utf-8").splitlines():
+            if ln.startswith("#") or not ln.strip():
+                continue
+            stems.append(Path(ln.split("\t")[1]).stem)
+        for s in stems:
+            if s in plan:
+                continue
+            wsf = ws_dir / (s + ".txt")
+            if not wsf.exists():
+                print(f"!! 工作区缺标签，跳过：{s}")
+                continue
+            ws_rows = read_rows(wsf)
+            lib = read_rows(LBL / (s + ".txt"))
+            miss = [r for r in lib if not any(near(r, w) for w in ws_rows)]
+            if miss:
+                print(f"!! 工作区标签未覆盖库内框（{len(miss)} 个），跳过：{s}")
+                continue
+            plan[s] = ws_rows
+            accepted.append(s)
 
     # ---- 合成最终标签 ----
     final: dict[str, list[tuple]] = {}
-    stats = {"imgs": len(exp), "restored": 0, "bad_stem": []}
-    for stem, rows in exp.items():
+    stats = {"imgs": len(plan), "n_exp": len(exp), "n_acc": len(accepted),
+             "restored": 0, "kept": 0, "bad_stem": []}
+    for stem, rows in plan.items():
         lib = read_rows(LBL / (stem + ".txt"))
         out = list(rows)
         if stem in restore:
@@ -85,6 +139,15 @@ def main() -> int:
                 if r[0] == 4 and not any(near(r, s) for s in out):
                     out.append(r)
                     stats["restored"] += 1
+        if keep:
+            for r in lib:
+                if r[0] in keep and not any(
+                        s[0] == r[0] and iou(r, s) >= 0.5 for s in out):
+                    out.append(r)
+                    stats["kept"] += 1
+                    stats.setdefault("kept_detail", []).append(
+                        (stem, r[0], r[1], r[2], r[3], r[4]))
+
         # 收尾：裁剪到 [0,1]，去掉零面积框
         clean = []
         for c, cx, cy, w, h in out:
@@ -103,14 +166,22 @@ def main() -> int:
     if args.dry:
         for stem, rows in final.items():
             c = Counter(r[0] for r in rows)
-            tag = " [恢复goggles]" if stem in restore else ""
-            print(f"{stem[:44]:46} {len(rows)}框 person{c[0]} {tag}")
-        print(f"\n干跑 {stats['imgs']} 图，恢复 goggles 框 {stats['restored']} 个")
+            tags = []
+            if stem in restore:
+                tags.append("恢复goggles")
+            if stem in accepted:
+                tags.append("未改动→采纳工作区(库内+候选)")
+            print(f"{stem[:44]:46} {len(rows)}框 person{c[0]}"
+                  + ("  [" + "/".join(tags) + "]" if tags else ""))
+        print(f"\n干跑：导出图 {stats['n_exp']} + 未改动采纳 {stats['n_acc']} = {stats['imgs']} 图"
+              f"，恢复 goggles 框 {stats['restored']} 个，防误删保留 {stats['kept']} 个")
+        for st, c, cx, cy, w, h in stats.get("kept_detail", []):
+            print(f"  保留 {NAMES[c]:9} {st[:44]:46} cx{cx:.3f} cy{cy:.3f} w{w:.3f} h{h:.3f}")
         return 0
 
     # ---- 备份 ----
     if not args.no_backup:
-        ts = time.strftime("%Y%m%d")
+        ts = time.strftime("%Y%m%d_%H%M%S")
         bk = LAB / "_label_backup" / f"labels_{args.split}_person_{ts}.tar.gz"
         bk.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(bk, "w:gz") as tf:
@@ -122,7 +193,21 @@ def main() -> int:
     for stem, rows in final.items():
         txt = "\n".join(" ".join(str(v) for v in r) for r in rows) + ("\n" if rows else "")
         (LBL / (stem + ".txt")).write_text(txt, encoding="utf-8", newline="\n")
-    print(f"落库 {len(final)} 图（恢复 goggles 框 {stats['restored']} 个）")
+    print(f"落库 {len(final)} 图（导出 {stats['n_exp']} + 未改动采纳 {stats['n_acc']}；"
+          f"恢复 goggles 框 {stats['restored']} 个；防误删保留框 {stats['kept']} 个）")
+
+    # ---- 已完成清单（防止下一批重复推送已审图） ----
+    if args.done_file:
+        df = Path(args.done_file)
+        if not df.is_absolute():
+            df = ROOT / df
+        old = set()
+        if df.exists():
+            old = {l.strip() for l in df.read_text(encoding="utf-8").splitlines() if l.strip()}
+        new = old | set(final)
+        df.parent.mkdir(parents=True, exist_ok=True)
+        df.write_text("\n".join(sorted(new)) + "\n", encoding="utf-8", newline="\n")
+        print(f"已完成清单 → {df.relative_to(ROOT)}（{len(old)} → {len(new)} 图）")
 
     # ---- 全库校验 + 对账 ----
     bad = orphan_img = orphan_lab = 0

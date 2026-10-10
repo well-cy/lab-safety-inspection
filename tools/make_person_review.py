@@ -75,14 +75,28 @@ def main() -> int:
     ap.add_argument("--out", default="")
     ap.add_argument("--exclude-export", default="",
                     help="编辑器导出 txt；其中 ### 列出的图视为已完成，从队列剔除")
+    ap.add_argument("--exclude-all", action="store_true",
+                    help="自动排除 outputs/person_review_*/_her_export.txt 里所有已完成图（防批次回退）")
+    ap.add_argument("--done-file", default="data/_person_review_done.txt",
+                    help="已完成图清单（apply_person_review 落库时追加）")
     args = ap.parse_args()
 
     excl: set[str] = set()
-    if args.exclude_export:
-        for ln in Path(args.exclude_export).read_text(encoding="utf-8").splitlines():
+    sources = [Path(p) for p in args.exclude_export.split(",") if p.strip()]
+    if args.exclude_all:
+        sources += sorted(ROOT.glob("outputs/person_review_*/_her_export.txt"))
+    for src in sources:
+        for ln in src.read_text(encoding="utf-8").splitlines():
             ln = ln.strip()
             if ln.startswith("###"):
                 excl.add(ln[3:].strip())
+    # 已完成清单（apply_person_review 落库时追加；含"未改动即通过"的图）
+    done_p = ROOT / args.done_file
+    if args.done_file and done_p.exists():
+        for ln in done_p.read_text(encoding="utf-8").splitlines():
+            if ln.strip():
+                excl.add(ln.strip())
+    print(f"  已完成剔除 {len(excl)} 图（导出 {len(sources)} 份 + {args.done_file}）")
 
     # 网图批（已有精修 person）排除
     webs = {Path(f).stem for f in Path(ROOT / WEBS).glob("*.txt")}
