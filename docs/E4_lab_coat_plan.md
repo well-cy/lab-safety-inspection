@@ -787,7 +787,47 @@ lab_coat 1,422 / goggles 1,291）。
 
 **底座不变（B+32 无数据变更，仅 raw 层解压+初筛；底座数字取 B+31 p0_j 落库后实测）**：
 train 1,231 图 / 6,048 框（person 1,413 / mask 898 / gloves 1,869 / lab_coat 1,104 / goggles 764）；
-valid 262/1,256、test 732/584；全库 **2,225 图 / 7,888 框**。done 清单 575；下一批 p0_k 未生成
+valid 262/1,256、test 732/584；全库 **2,225 图 / 7,888 框**。done 清单 575；下一批 p0_k 于本小节后由 B+33 落库（见下）
 （队列剩余按并行会话 p0_j 落库后口径，生成时以 `data/_person_review_done.txt` 实时为准）。
 待办：① 她过 `_clean_p01–20.jpg` 判场景红线；② 按批生成 lab_coat 画框工具（复用审核编辑器）；
 ③ 向组长索 `best.pt` 做预标注。
+
+### B+33. person 补标第十一批落库（p0_k，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_k/`，index 共 57 图（19 张在她导出中出现 + 38 张未改动按「库内框 + 候选」直接采纳）。
+她提交的 `_her_export.txt` 含 22 个图段，其中 **3 张整图剔除**（新上的编辑器 X 键「剔除此图」首次批量实战）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_k/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_k/labels \
+  --batch-index outputs/person_review_p0_k/index.txt \
+  --reject-tag p0k_reject_20261011
+```
+
+**整图剔除明细（3 张，`!REJECT`）**：
+
+| 图 | 剔除原因 | 带走框数（person / mask / gloves） |
+|---|---|---|
+| `cppe5_51_cbc32941` | 影棚摆拍两人（白幕前摆姿势，非实验室/医疗操作场景，场景红线） | 6 / 2 / 0 |
+| `cppe5_52_3bf55944` | 商场人群密集，无任何实验室背景（场景红线） | 14 / 9 / 4 |
+| `cppe5_58_740ad7aa` | 街边排队消毒人员（户外街景，非实验室操作场景） | 14 / 9 / 4 |
+
+剔除图 images + labels 已移入 `data/_rejected/p0k_reject_20261011/`（3 组 jpg+txt），并计入 done 清单（不会在后续批次复活）。
+
+**净增量（相对 B+31 底座）**：person **-40** / mask **-20** / gloves **-7** / goggles **+1** = **-66**。
+其中 3 张剔除图合计带走 person 34 / mask 20 / gloves 8；剩余 54 图的人工精修另有小幅负向调整（删碎片框、修正误标）。
+
+**执行后底座**：**train 1,228 图 / 5,982 框（person 1,373 / mask 878 / gloves 1,862 / lab_coat 1,104 / goggles 765）**；
+valid 262/1,256、test 732/584 不变。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_122620.tar.gz`（1,231 文件）。
+done 清单 **575 → 635**；全库校验 **7,822 框，0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 重跑幂等（剔除 0 张、落库 57 图，`!REJECT` 图因库内已不存在而安全跳过）✅；
+剔除拼版 `outputs/person_review_p0_k/_rejected_sheet.jpg` 已生成并目视确认 3 张确为场景红线图。
+
+**队列状态与下一批**：done 635，现存残留未审核图按 `data/_person_review_done.txt` 实时口径继续生成 **p0_l**。
+`EXCLUDE_MANUAL` 待增补 {51, 52, 58}（防 `import_cppe5_batch.py` 重跑复活）。
