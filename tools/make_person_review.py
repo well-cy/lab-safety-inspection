@@ -110,6 +110,9 @@ def main() -> int:
     ap.add_argument("--note", default="", help="批次备注，写进 index 标题")
     ap.add_argument("--pending-vs-export", default="",
                     help="旧导出 txt：库内框若在其中消失（IoU<0.5）则在图上标「★待确认」（复核重做用）")
+    ap.add_argument("--exclude-prefix", default="lc13_",
+                    help="按前缀排除图（逗号分隔）。默认排除 'lc13_'：lc13 是并行 lab_coat 画框线写入 train 的图，"
+                         "每批都会把 person 队列撑出新图，导致 person 队列永不清空。传空串 '' 可关闭该排除。")
     args = ap.parse_args()
 
     excl: set[str] = set()
@@ -128,6 +131,11 @@ def main() -> int:
             if ln.strip():
                 excl.add(ln.strip())
     print(f"  已完成剔除 {len(excl)} 图（导出 {len(sources)} 份 + {args.done_file}）")
+
+    # 前缀排除（默认 lc13_：并行 lab_coat 线写入 train 的图，避免 person 队列被无限撑大）
+    excl_pre = tuple(p.strip() for p in args.exclude_prefix.split(",") if p.strip())
+    if excl_pre:
+        print(f"  前缀排除 {excl_pre}（可用 --exclude-prefix '' 关闭）")
 
     # 网图批（已有精修 person）排除
     webs = {Path(f).stem for f in Path(ROOT / WEBS).glob("*.txt")}
@@ -153,6 +161,8 @@ def main() -> int:
         rec = (stem, ip, sum(1 for r in rows if r and int(r[0]) >= 1))
         all_items.append(rec)
         if stem in webs or stem in excl:
+            continue
+        if excl_pre and stem.startswith(excl_pre):
             continue
         items.append(rec)
 
