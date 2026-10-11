@@ -74,10 +74,14 @@ _pipeline_lock = threading.Lock()
 
 MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
-    "模型权重不随 git 仓库分发，获取方式见 README「如何运行」第 3 节：\n"
-    "  curl -L -o ai/model/sh17_yolov8s.pt "
+    "模型权重不随 git 仓库分发。任选一种获取方式：\n"
+    "  A) 自训 5 类 Lab-PPE 模型（推荐）：放到 ai/model/labppe_v8s.pt，\n"
+    "     由组长/数据集负责人单独分发（见 docs/DEVELOPMENT_GUIDE.md）\n"
+    "  B) SH17 官方权重（17 类，回退方案）：\n"
+    "     curl -L -o ai/model/sh17_yolov8s.pt "
     "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt\n"
-    "（国内网络需加 proxy 参数：curl 追加 --proxy http://127.0.0.1:7890）"
+    "  也可用 LABSAFETY_MODEL_PATH 环境变量指向任意权重路径。\n"
+    "  （国内网络需加 proxy 参数：curl 追加 --proxy http://127.0.0.1:7890）"
 )
 
 

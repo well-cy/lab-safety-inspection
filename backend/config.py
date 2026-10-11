@@ -85,8 +85,15 @@ class Config:
         self.ROOT = root
 
         # ---------- 路径 ----------
-        self.MODEL_PATH = _env_path(
-            "MODEL_PATH", root / "ai" / "model" / "sh17_yolov8s.pt")
+        # 默认模型：优先使用自训 5 类 Lab-PPE 模型（person/mask/gloves/lab_coat/goggles），
+        # 该模型不存在时回退 SH17 官方权重（17 类，经 CLASS_ALIAS 映射到系统类别）。
+        # 仍可用 LABSAFETY_MODEL_PATH 环境变量强制指定任意权重。
+        # 说明：模型权重不入 git 仓库（见 .gitignore / DEVELOPMENT_GUIDE），
+        #      新成员克隆后若两个权重都没有，启动时会给出 503 + 下载提示。
+        _labppe = root / "ai" / "model" / "labppe_v8s.pt"
+        _default_model = _labppe if _labppe.exists() else (
+            root / "ai" / "model" / "sh17_yolov8s.pt")
+        self.MODEL_PATH = _env_path("MODEL_PATH", _default_model)
         self.DB_PATH = _env_path(
             "DB_PATH", root / "backend" / "labsafety.db")
         self.STATIC_DIR = _env_path(
