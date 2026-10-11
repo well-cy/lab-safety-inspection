@@ -1380,3 +1380,26 @@ train 段进度：**192/662（约 29%）**；test 段 75 张全部完成；val �
 
 **结论**：person 补标主体工作**完全收口**（默认队列 0）；`lc13_*` 图的 person 复核转为**按需触发**的独立任务
 （需要时用 `--exclude-prefix ""` 或指定 `--stems` 单独拉批），不再阻塞 person 主队列。
+
+---
+
+### B+47. lc13g 第七批画框落库（60 张 → train +40 / 剔除 19 / 待补 1，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（41 保留 / 19 剔除），0 坏行 / 0 越界。
+**上批待补项关闭后新增一件**：
+- ✅ `9B0ZP1V0MDNT`（显微镜前研究员）本批队首补标 lab_coat + person，正常入库；
+- ⚠️ **`BU4ZPSTGQ7ST` 漏标 lab_coat**（真实实验室白大褂+蓝手套场景，只标了 gloves+person）
+  → `--skip-stems` 扣下，图留在源池，done 未登记，下批队首补框。
+1 处剔除+框冲突（DXOA55NEGIC0：生活照白夹克，剔除正确，1 框丢弃）→ 按剔除优先处理。
+**落库**：**train +40 图 / +169 框（person 76 / lab_coat 68 / gloves 16 / goggles 12，本批无 mask）**；
+剔除 19 → `data/_rejected/lc13g_reject_20261011/`。
+全库校验 **9,339 框（train 7,232 / valid 1,256 / test 851），0 坏行 / 0 孤儿** ✅。
+done 清单 **358 → 417**；源池剩余 **768 张**（train 558 / val 135 / test 75）。
+
+**lc13 系累计（B+38~47）**：**+241 图 / +979 框（lab_coat +396 / person +456 / gloves +68 / goggles +52 / mask +7）**，剔除 175 张。
+train 段进度：**232/662（约 35%）**；val 段 135 张未动。
+复核拼图：`outputs/labcoat_label_review_lc13g/_review_kept_41.jpg` / `_review_rejected_19.jpg`。
+
+**质检备注**：保留图中含若干边缘样本——骷髅穿白大褂（DYRNJEQ9C7QF）、蓝发人偶（DMFYCQIJMIWS）、
+户外航拍远景（C3TC3WHRMX5K）、番茄手持特写（CHZ4M336DN5F）等，框几何正确，留作难度样本；
+若 E3 复测 lab_coat 误检上升，可优先对本类边缘子集降采样。
