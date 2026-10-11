@@ -1338,3 +1338,25 @@ p0_l -2 / p0_m +7 / p0_n +30 / p0_o +110 / p0_p +117 / p0_q +74 / p0_r +84 / p0_
 1. person 补标主体工作**已收口**；剩余 `lc13_*` 新图的 person 复核可作为**常态化尾随任务**，随 lc13 线批次滚动处理即可，无需当作独立大批次。
 2. 若 lc13 线继续大规模写 train，建议在 person 审核工具中**默认排除 `lc13_*`**（或单独标记「lc13 图 person 复核」子队列），避免两线队列互相干扰。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+---
+
+### B+46. lc13f 第六批画框落库（60 张 → train +41 / 剔除 18 / 待补 1，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（42 保留 / 18 剔除）。
+**落库**：**train +41 图 / +175 框（person 90 / lab_coat 72 / gloves 10 / goggles 2 / mask 1）**；
+剔除 18 → `data/_rejected/lc13f_reject_20261011/`。
+**跳过 1 图待补标**：`9B0ZP1V0MDNT`（显微镜前研究员，典型实验室场景但漏标 lab_coat，
+图保留在源池 `train/lab_coat/`，done 清单未登记，下批补框后入库）。
+全库校验 **9,170 框（train 7,063 / valid 1,256 / test 851），0 坏行 / 0 孤儿** ✅。
+done 清单 **299 → 358**；源池剩余 **787 张**（train 577 / val 135 / test 75）。
+
+**lc13 系累计（B+38~46）**：**+201 图 / +810 框（lab_coat +328）**，剔除 156 张。
+train 段进度：**192/662（约 29%）**；test 段 75 张全部完成；val 段 135 张未动。
+复核拼图：`outputs/labcoat_label_review_lc13f/_review_kept_42.jpg` / `_review_rejected_18.jpg`。
+新增通用复核工具 `tools/make_labcoat_review_sheet.py`（此前各批为内联脚本，本批固化复用）。
+
+**质检备注**：剔除合理——影棚人像摆拍（8TMKI19HSJ5A、9F6F0YSVWK7 水印）、
+万圣节妆（9GSX9X7L96BX）、人台商品图（9PGOZ0LQXM2P）、生活照（8ZOBYFW71CVW）等；
+保留图中 9HXZ825Y1G32（户外玉米地灰大衣）、A7M5D2TS8Q3D（影棚）等边缘样本
+框几何正确，留作难度样本。
