@@ -192,7 +192,7 @@ def main() -> int:
         scope += f" · {args.note}"
     index = [f"# person 补标人工审核 · 批 {args.tag} · split={args.split} · {scope}",
              "# 图上黄虚线框=person 候选（COCO conf≥%.2f，未确认）+ 现有 PPE 框" % args.conf_min,
-             "# 操作：删错框(×)、拖动/缩放、空白拖拽新建；导出贴回 AI；整批没问题直接回「OK」",
+             "# 操作：删错框(×)、拖动/缩放、空白拖拽新建、**X 键整图剔除**；导出贴回 AI；整批没问题直接回「OK」",
              "# 框样式：实线=库内已有标注 · 黄虚线「候选」=COCO person 未确认 · ★待确认=上次复核中消失、本次被保留的框",
              "# 编号\t文件\t族\t现有框\t候选框\t待确认"]
     for i, (stem, ip, n_ppe) in enumerate(batch):

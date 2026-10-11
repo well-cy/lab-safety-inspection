@@ -9,6 +9,9 @@
   点框右上角 × = 删除
   数字键 1-5 = 切换类别（选中框会跟着改）
   Delete = 删除选中框
+  X 键 / 顶部「剔除此图」按钮 = **整图剔除**（2026-10-11 新增）
+      导出时该图写成 `### <文件名>` + `!REJECT [原因]` 行；落库端
+      （apply_person_review.py）据此把图+标签移入 data/_rejected/，不写标签。
 右侧「导出」区：复制全部改动标签 / 逐个下载 txt。
 
 用法: .venv/Scripts/python.exe tools/make_box_editor.py --batch r2
@@ -80,6 +83,16 @@ HTML = r"""<!DOCTYPE html>
  .hint{font-size:12px;color:#8b9099;line-height:1.7}
  .hint b{color:#c9ced6}
  #dirty{font-size:12px;color:#ffd479}
+ button.rej{background:#3a3f47;color:#ff8a80;border:1px solid #ff3b30}
+ button.rej.on{background:#ff3b30;color:#fff;font-weight:700}
+ #rejnote{display:none;background:#2c3037;color:#e6e6e6;border:1px solid #ff3b30;border-radius:5px;
+          padding:3px 6px;font-size:12px;width:180px}
+ #rejov{display:none;position:absolute;inset:0;box-sizing:border-box;border:5px solid #ff3b30;
+        background:repeating-linear-gradient(45deg,rgba(255,59,48,.18) 0 20px,rgba(255,59,48,.04) 20px 40px);
+        pointer-events:none;z-index:7}
+ #rejbar{display:none;position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+         color:#ff6b60;font-weight:900;font-size:26px;letter-spacing:4px;pointer-events:none;z-index:8;
+         text-shadow:0 0 8px #000,0 0 3px #000}
 </style></head><body>
 <header>
   <span id="cats"></span>
@@ -89,13 +102,15 @@ HTML = r"""<!DOCTYPE html>
   <label style="font-size:12px;color:#9aa0a6">缩放 <input type="range" id="zoom" min="30" max="220" value="100" style="width:110px;vertical-align:middle"></label>
   <button id="reset" class="gray">撤销本图改动</button>
   <button id="clear" class="gray">清空本图</button>
+  <button id="rej" class="rej" title="整图剔除：导出后把图+标签移入 _rejected，不进训练集">剔除此图</button>
+  <input id="rejnote" placeholder="剔除原因（可留空）">
   <button id="fit" class="gray">适应窗口</button>
   <button id="reload" class="gray">重新载入</button>
   <span id="dirty"></span>
 </header>
 <div id="err" style="display:none;background:#ff3b30;color:#fff;padding:6px 12px;font-size:12px"></div>
 <main>
-  <div id="stage"><div id="wrap"><img id="bg"><div id="layer"></div></div></div>
+  <div id="stage"><div id="wrap"><img id="bg"><div id="rejov"></div><div id="rejbar">✕ 已剔除 · 导出后移出训练集</div><div id="layer"></div></div></div>
   <aside>
     <h3>导出（改完把下面内容贴给我）</h3>
     <button id="copy">复制全部改动标签</button>
@@ -110,6 +125,7 @@ HTML = r"""<!DOCTYPE html>
       · 点框右上角红 × = 删除<br>
       · 数字键 <b>1-5</b> = 切类别（选中框一起改）<br>
       · <b>Delete</b> = 删除选中框<br>
+      · <b>X</b> 键 / 顶部<b>「剔除此图」</b> = 整图剔除（画面变红，导出带 !REJECT，落库时移入 _rejected 不进训练集）<br>
       · 类别：1 person · 2 mask · 3 gloves · 4 lab_coat · 5 goggles
     </div>
   </aside>
@@ -120,7 +136,8 @@ const NAMES={0:'person',1:'mask',2:'gloves',3:'lab_coat',4:'goggles'};
 const DATA=__DATA__;
 
 let imgs=DATA.imgs.map(o=>({name:o.name,path:o.path,nw:o.nw,nh:o.nh,
-  boxes:o.boxes.map(b=>({c:b[0],x:b[1],y:b[2],w:b[3],h:b[4],cand:b[5]||0}))}));
+  boxes:o.boxes.map(b=>({c:b[0],x:b[1],y:b[2],w:b[3],h:b[4],cand:b[5]||0})),
+  rej:0, rejNote:''}));
 const orig=JSON.parse(JSON.stringify(imgs));
 const dirty={};
 let cur=DATA.focus||0, cls=1, z=1, sel=-1, drag=null;
@@ -129,7 +146,9 @@ const bg=document.getElementById('bg'), layer=document.getElementById('layer'),
       wrap=document.getElementById('wrap'), stage=document.getElementById('stage'),
       picker=document.getElementById('picker'), out=document.getElementById('out'),
       dls=document.getElementById('dls'), dirtyEl=document.getElementById('dirty'),
-      errEl=document.getElementById('err');
+      errEl=document.getElementById('err'), rejBtn=document.getElementById('rej'),
+      rejNoteEl=document.getElementById('rejnote'), rejov=document.getElementById('rejov'),
+      rejbar=document.getElementById('rejbar');
 
 function showErr(msg){ errEl.style.display='block'; errEl.textContent='⚠ '+msg+'（把这句发我）'; }
 window.onerror=function(m,s,l,c){ showErr('脚本错误: '+m+' @'+l+':'+c); };
@@ -150,7 +169,7 @@ function shortName(n){ return n.replace(/^stock_/,'').replace(/^(r3[su]|webs|web
 function refreshPicker(){
   [...picker.options].forEach((o,i)=>{
     const im=imgs[i];
-    o.textContent='#'+im.no+' '+shortName(im.name)+'（'+im.boxes.length+' 框'+(dirty[im.name]?' · 已改':'')+'）';
+    o.textContent='#'+im.no+' '+shortName(im.name)+'（'+im.boxes.length+' 框'+(im.rej?' · 已剔除':'')+(dirty[im.name]?' · 已改':'')+'）';
   });
 }
 imgs.forEach((im,i)=>{
@@ -172,6 +191,16 @@ document.getElementById('clear').onclick=()=>{
   if(!confirm('清空本图的所有框？（可在右侧导出后重画）')) return;
   imgs[cur].boxes=[]; sel=-1; touch(); render();
 };
+// 整图剔除（X 键或按钮）：导出时写 !REJECT 行，落库端移入 data/_rejected/
+function setRej(v){
+  const im=imgs[cur];
+  im.rej=v?1:0;
+  if(!im.rej) im.rejNote='';
+  sel=-1; touch(); render();
+  if(im.rej) rejNoteEl.focus();
+}
+rejBtn.onclick=()=>setRej(!imgs[cur].rej);
+rejNoteEl.oninput=()=>{ imgs[cur].rejNote=rejNoteEl.value; if(imgs[cur].rej) touch(); };
 document.getElementById('fit').onclick=()=>{
   const im=imgs[cur];
   let zz=Math.min((stage.clientWidth-40)/im.nw,(stage.clientHeight-40)/im.nh,1.5);
@@ -182,7 +211,8 @@ document.getElementById('copy').onclick=()=>{
   const txt=buildText(); out.value=txt;
   out.select();
   try{navigator.clipboard.writeText(txt);}catch(e){document.execCommand('copy');}
-  alert(txt? '已复制 '+Object.keys(dirty).length+' 张的标签，直接粘给我即可'
+  const nrej=Object.keys(dirty).filter(n=>{const o=imgs.find(x=>x.name===n); return o&&o.rej;}).length;
+  alert(txt? '已复制 '+Object.keys(dirty).length+' 张的标签'+(nrej?'（含剔除 '+nrej+' 张）':'')+'，直接粘给我即可'
            : '还没有任何改动');
 };
 
@@ -197,6 +227,13 @@ function render(){
   bg.style.width=(im.nw*z)+'px';
   bg.style.height=(im.nh*z)+'px';
   if(bg.getAttribute('src')!==im.path) bg.src=im.path;
+  rejov.style.display=im.rej?'block':'none';
+  rejbar.style.display=im.rej?'block':'none';
+  layer.style.opacity=im.rej?'.18':'1';
+  rejBtn.classList.toggle('on',!!im.rej);
+  rejBtn.textContent=im.rej?'撤销剔除（保留本图）':'剔除此图';
+  rejNoteEl.style.display=im.rej?'inline-block':'none';
+  if(rejNoteEl.value!==(im.rejNote||'')) rejNoteEl.value=im.rejNote||'';
   layer.innerHTML='';
   im.boxes.forEach((b,i)=>{
     const d=document.createElement('div');
@@ -271,6 +308,7 @@ window.addEventListener('keydown',e=>{
   }
   if(e.key==='ArrowLeft'){ go(cur-1); e.preventDefault(); }
   if(e.key==='ArrowRight'){ go(cur+1); e.preventDefault(); }
+  if(e.key==='x'||e.key==='X'){ setRej(!imgs[cur].rej); e.preventDefault(); }
   if(e.key>='1'&&e.key<='5'){
     cls=+e.key-1;
     if(sel>=0){ imgs[cur].boxes[sel].c=cls; touch(); }
@@ -278,18 +316,23 @@ window.addEventListener('keydown',e=>{
   }
 });
 
+function imgText(o){
+  let s='### '+o.name.replace(/\.jpg$/,'')+'\n';
+  if(o.rej) s+='!REJECT'+(o.rejNote?' '+o.rejNote.replace(/\s+/g,' ').trim():'')+'\n';
+  o.boxes.forEach(b=>{
+    s+=b.c+' '+((b.x+b.w/2).toFixed(6))+' '+((b.y+b.h/2).toFixed(6))+' '
+       +(b.w.toFixed(6))+' '+(b.h.toFixed(6))+'\n';
+  });
+  return s;
+}
+
 function buildText(){
   const keys=Object.keys(dirty);
   if(!keys.length) return '';
-  const im=imgs.find(o=>o.name===keys[0]);
   let s='';
   keys.forEach(name=>{
     const o=imgs.find(x=>x.name===name);
-    s+='### '+name.replace(/\.jpg$/,'')+'\n';
-    o.boxes.forEach(b=>{
-      s+=b.c+' '+((b.x+b.w/2).toFixed(6))+' '+((b.y+b.h/2).toFixed(6))+' '
-         +(b.w.toFixed(6))+' '+(b.h.toFixed(6))+'\n';
-    });
+    s+=imgText(o);
   });
   return s;
 }
@@ -301,15 +344,11 @@ render=function(){
   dls.innerHTML='';
   Object.keys(dirty).forEach(name=>{
     const o=imgs.find(x=>x.name===name);
-    let s='';
-    o.boxes.forEach(b=>{
-      s+=b.c+' '+((b.x+b.w/2).toFixed(6))+' '+((b.y+b.h/2).toFixed(6))+' '
-        +(b.w.toFixed(6))+' '+(b.h.toFixed(6))+'\n';
-    });
+    const s=imgText(o);
     const a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob([s],{type:'text/plain'}));
     a.download=name.replace(/\.jpg$/,'')+'.txt';
-    a.textContent='下载 '+name.replace(/\.jpg$/,'')+'.txt';
+    a.textContent='下载 '+name.replace(/\.jpg$/,'')+'.txt'+(o.rej?'（剔除）':'');
     a.style.cssText='display:block;color:#7cc4ff;font-size:12px;margin:3px 0';
     dls.appendChild(a);
   });

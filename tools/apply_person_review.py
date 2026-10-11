@@ -16,8 +16,19 @@
                                                # 批次内未出现在导出中的图，直接采用工作区标签（库内+候选）
 可选:
   --split train            落库 split
+  --reject-tag p0i_watermark
+                           整图剔除的去向目录名，默认 <批名>_reject_<日期>
+                           例：data/_rejected/<reject-tag>/
   --no-backup              跳过 tar 备份（默认全量备份 labels/ 到 _label_backup/）
   --dry                    只干跑，打印将写入的内容统计
+
+整图剔除（2026-10-11 新增，与编辑器 X 键配套）:
+  编辑器导出里出现
+      ### <文件名>
+      !REJECT [原因文字]
+  即表示「这张图整张剔除」。落库时该图**不写标签**，而是把
+  images/<split>/<name>.* 与 labels/<split>/<name>.txt 一并 **移到**
+  data/_rejected/<reject-tag>/（只移不删，可随时回滚），并从工作区标签删除。
 落库后自动做全库格式校验 + 按类别对账。
 """
 from __future__ import annotations
@@ -25,6 +36,7 @@ from __future__ import annotations
 import argparse
 import io
 import re
+import shutil
 import sys
 import tarfile
 import time
@@ -36,21 +48,40 @@ ROOT = Path(__file__).resolve().parents[1]
 LAB = ROOT / "data" / "lab_ppe"
 SPLITS = ("train", "valid", "test")
 NAMES = ["person", "mask", "gloves", "lab_coat", "goggles"]
+IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+REJECT_WORDS = ("reject", "剔除", "丢弃", "删图")
 
 
-def parse_export(txt: str) -> dict[str, list[tuple]]:
-    items, cur = {}, None
+def parse_export(txt: str):
+    """解析编辑器导出。
+
+    返回 (items, rejected, reasons)：
+      items   : {stem: [(cls,cx,cy,w,h), ...]}
+      rejected: {stem}          出现 `!REJECT [原因]` 行 → 整图剔除
+      reasons : {stem: 原因文字}
+    兼容旧格式（无 !REJECT 行时 rejected 为空）。
+    """
+    items: dict[str, list[tuple]] = {}
+    rejected: set[str] = set()
+    reasons: dict[str, str] = {}
+    cur = None
     for ln in txt.splitlines():
-        ln = ln.strip()
-        if not ln:
+        s = ln.strip()
+        if not s:
             continue
-        if ln.startswith("###"):
-            cur = ln[3:].strip()
-            items[cur] = []
-        elif cur and len(ln.split()) == 5:
-            p = ln.split()
+        if s.startswith("###"):
+            cur = s[3:].strip()
+            items.setdefault(cur, [])
+        elif s.startswith("!") and cur is not None:
+            parts = s[1:].split(None, 1)
+            if parts and parts[0].lower() in REJECT_WORDS:
+                rejected.add(cur)
+                if len(parts) > 1:
+                    reasons[cur] = parts[1].strip()
+        elif cur is not None and len(s.split()) == 5:
+            p = s.split()
             items[cur].append((int(p[0]), *(round(float(v), 6) for v in p[1:5])))
-    return items
+    return items, rejected, reasons
 
 
 def read_rows(p: Path) -> list[tuple]:
@@ -92,12 +123,19 @@ def main() -> int:
                     help="已完成（已落库）图清单，追加式；空串则跳过")
     ap.add_argument("--no-backup", action="store_true")
     ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--reject-tag", default="",
+                    help="整图剔除去向目录名（data/_rejected/<tag>/），默认 <批名>_reject_<日期>")
     args = ap.parse_args()
 
-    exp = parse_export(Path(args.export).read_text(encoding="utf-8"))
+    exp, rejected, reasons = parse_export(Path(args.export).read_text(encoding="utf-8"))
+    exp = {k: v for k, v in exp.items() if k not in rejected}   # 剔除图不写标签
     restore = {s.strip() for s in args.restore_stems.split(",") if s.strip()}
     keep = {int(x) for x in args.keep_classes.split(",") if x.strip()}
     LBL = LAB / "labels" / args.split
+    if rejected:
+        print(f"整图剔除 {len(rejected)} 张（不写标签，落库时移入 _rejected/）：")
+        for s in sorted(rejected):
+            print(f"   ✕ {s}" + (f"  [{reasons[s]}]" if reasons.get(s) else ""))
 
     # ---- 待落库计划：导出图 + 批次内未改动图（采用工作区标签） ----
     plan: dict[str, list[tuple]] = {k: list(v) for k, v in exp.items()}
@@ -112,7 +150,7 @@ def main() -> int:
                 continue
             stems.append(Path(ln.split("\t")[1]).stem)
         for s in stems:
-            if s in plan:
+            if s in plan or s in rejected:
                 continue
             wsf = ws_dir / (s + ".txt")
             if not wsf.exists():
@@ -129,7 +167,7 @@ def main() -> int:
 
     # ---- 合成最终标签 ----
     final: dict[str, list[tuple]] = {}
-    stats = {"imgs": len(plan), "n_exp": len(exp), "n_acc": len(accepted),
+    stats = {"imgs": len(plan), "n_exp": len(exp), "n_acc": len(accepted), "n_rej": len(rejected),
              "restored": 0, "kept": 0, "bad_stem": []}
     for stem, rows in plan.items():
         lib = read_rows(LBL / (stem + ".txt"))
@@ -175,6 +213,14 @@ def main() -> int:
                   + ("  [" + "/".join(tags) + "]" if tags else ""))
         print(f"\n干跑：导出图 {stats['n_exp']} + 未改动采纳 {stats['n_acc']} = {stats['imgs']} 图"
               f"，恢复 goggles 框 {stats['restored']} 个，防误删保留 {stats['kept']} 个")
+        if rejected:
+            rtag = args.reject_tag or f"{Path(args.export).parent.name.replace('person_review_', 'p0_')}_reject_{time.strftime('%Y%m%d')}"
+            print(f"干跑：整图剔除 {len(rejected)} 张 → data/_rejected/{rtag}/（图+标签移动，不写标签）")
+            for s in sorted(rejected):
+                found = next((p for p in (LAB / 'images' / args.split).glob(s + '.*')
+                              if p.suffix.lower() in IMG_EXT), None)
+                print(f"   ✕ {s[:50]:52} "
+                      + (f"移 {found.name}" if found else "!! 库内找不到图（跳过）"))
         for st, c, cx, cy, w, h in stats.get("kept_detail", []):
             print(f"  保留 {NAMES[c]:9} {st[:44]:46} cx{cx:.3f} cy{cy:.3f} w{w:.3f} h{h:.3f}")
         return 0
@@ -189,12 +235,43 @@ def main() -> int:
                 tf.add(f, arcname=f.name)
         print(f"备份 → {bk.relative_to(ROOT)}（{len(list((LAB / 'labels' / args.split).glob('*.txt')))} 文件）")
 
+    # ---- 整图剔除：图+标签移入 data/_rejected/（只移不删，可回滚） ----
+    if rejected:
+        rtag = args.reject_tag or \
+            f"{Path(args.export).parent.name.replace('person_review_', 'p0_')}_reject_{time.strftime('%Y%m%d')}"
+        rdir = ROOT / "data" / "_rejected" / rtag
+        rdir.mkdir(parents=True, exist_ok=True)
+        ws_dir = Path(args.accept_from_ws) if args.accept_from_ws else None
+        if ws_dir and not ws_dir.is_absolute():
+            ws_dir = ROOT / ws_dir
+        moved, missing = [], []
+        for s in sorted(rejected):
+            ip = next((p for p in (LAB / "images" / args.split).glob(s + ".*")
+                       if p.suffix.lower() in IMG_EXT), None)
+            if ip is None:
+                missing.append(s)
+                continue
+            shutil.move(str(ip), str(rdir / ip.name))
+            lf = LBL / (s + ".txt")
+            if lf.exists():
+                shutil.move(str(lf), str(rdir / lf.name))
+            if ws_dir is not None and (ws_dir / (s + ".txt")).exists():
+                (ws_dir / (s + ".txt")).unlink()
+            moved.append((s, reasons.get(s, "")))
+        print(f"整图剔除 {len(moved)} 张 → data/_rejected/{rtag}/")
+        for s, rs in moved:
+            print(f"   ✕ {s[:50]:52}" + (f" [{rs}]" if rs else ""))
+        if missing:
+            print(f"!! 库内找不到以下图（已跳过）：{missing}")
+        stats["n_rej"] = len(moved)
+
     # ---- 落库 ----
     for stem, rows in final.items():
         txt = "\n".join(" ".join(str(v) for v in r) for r in rows) + ("\n" if rows else "")
         (LBL / (stem + ".txt")).write_text(txt, encoding="utf-8", newline="\n")
     print(f"落库 {len(final)} 图（导出 {stats['n_exp']} + 未改动采纳 {stats['n_acc']}；"
-          f"恢复 goggles 框 {stats['restored']} 个；防误删保留框 {stats['kept']} 个）")
+          f"恢复 goggles 框 {stats['restored']} 个；防误删保留框 {stats['kept']} 个）"
+          + (f"；整图剔除 {stats['n_rej']} 张" if rejected else ""))
 
     # ---- 已完成清单（防止下一批重复推送已审图） ----
     if args.done_file:
@@ -204,10 +281,10 @@ def main() -> int:
         old = set()
         if df.exists():
             old = {l.strip() for l in df.read_text(encoding="utf-8").splitlines() if l.strip()}
-        new = old | set(final)
+        new = old | set(final) | rejected
         df.parent.mkdir(parents=True, exist_ok=True)
         df.write_text("\n".join(sorted(new)) + "\n", encoding="utf-8", newline="\n")
-        print(f"已完成清单 → {df.relative_to(ROOT)}（{len(old)} → {len(new)} 图）")
+        print(f"已完成清单 → {df.relative_to(ROOT)}（{len(old)} → {len(new)} 图，含剔除图）")
 
     # ---- 全库校验 + 对账 ----
     bad = orphan_img = orphan_lab = 0
