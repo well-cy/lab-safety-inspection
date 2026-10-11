@@ -37,18 +37,20 @@ KAGGLE_PATH = "/kaggle/input/lab-ppe/lab_ppe_kaggle"
 SPLITS = ("train", "valid", "test")
 EXTS = (".jpg", ".jpeg", ".png", ".bmp")
 
-DATA_YAML = f"""# Lab-PPE 4 类检测数据集（Kaggle 版）
+DATA_YAML = f"""# Lab-PPE 5 类检测数据集（Kaggle 版）
 # 上传为 Kaggle Dataset 后，slug 若不是 lab-ppe，请同步改下面的 path
+# 口径：2026-10-11 person 5 类化后（person 在头位），与 data/lab_ppe/data.yaml 一致
 path: {KAGGLE_PATH}
 train: images/train
 val: images/valid
 test: images/test
-nc: 4
+nc: 5
 names:
-  0: mask
-  1: gloves
-  2: lab_coat
-  3: goggles
+  0: person
+  1: mask
+  2: gloves
+  3: lab_coat
+  4: goggles
 """
 
 
