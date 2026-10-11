@@ -1234,3 +1234,58 @@ done 清单 **1,055 → 1,115**；train 全库校验 **0 坏行 / 0 孤儿图 / 
 
 **队列状态与下一批**：done 1,115，剩余 **84**（P0 37 / P1 47），继续生成 **p0_t**（60 图）——person 补标队列预计 2 批内清空。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+---
+
+### B+42. lc13e 第五批画框落库（60 张 → train +32 / 剔除 28，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（32 带框 / 28 剔除），0 漏标。
+1 处剔除+框行冲突（76P4XHJRJZJR：先画整图框后反悔剔除）→ 按剔除优先处理。
+**落库**：**train +32 图 / +130 框（lab_coat 46 / person 65 / gloves 11 / goggles 8）**；
+剔除 28 → `data/_rejected/lc13e_reject_20261011/`。
+全库校验 **8,939 框，0 坏行 / 0 孤儿** ✅。done 清单 **299**；源池剩余 **805 张**。
+
+**lc13 系累计（B+38~42）**：**+160 图 / +644 框（lab_coat +256）**，剔除 138 张。
+train 段进度：**160/662（约 24%）**；val 段 135 张未动。
+
+**质检备注**：本批实验室/医疗操作场景占比回升（5OPGXIXC4MI9 五人实验台、
+5QMQ3AQ739CS 五人、7YLPUMC91383 等均为真实操作图）；亦含少量人像与
+婴孩穿白大褂（77PQ2HVJSNVQ）、户外灰大衣（77RM8EDS7301）等边缘样本，
+框几何正确，留作难度样本。
+
+---
+
+### B+44. person 补标第二十批落库（p0_t，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_t/`，index 共 60 图（**25 张**出现在她的导出中 + 35 张未改动按「库内框 + 候选」直接采纳）。
+本批 **无整图剔除**，构成为 3 张 `web_p904xxxxx` 系列（web_p90407325 / 90407328 / 90407329，多人穿脱 PPE 场景）+ **22 张 `lcsi_crop` 族**
+（`lcsi_03/07/10/17/27/34/46/48` + `lcsi_frame_00003…00100`，均为单人 person 全身/半身裁剪图，多数由空标签补至 1 框）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_t/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_t/labels \
+  --batch-index outputs/person_review_p0_t/index.txt \
+  --reject-tag p0t_reject_20261011
+```
+
+**净增量（备份差分实测，相对 B+43 底座）**：**+34 框**。
+备份 vs 磁盘逐图差分：1306 → 1306 图（无新增/无删除图），common 段 **+34 框**，
+完全对应导出图段：`web_p90407325` +4、`web_p90407329` +3、`web_p90407328` +3，以及 22 张 `lcsi_*` 各 +1~+2（多数 0→1）。
+（`--keep-classes 3` 防误删保留 **0** 个框：本批 lcsi 裁剪图无 lab_coat 标注。）
+
+**执行后底座**：**train 1,306 图 / 6,866 框（person 2,090 / mask 863 / gloves 1,868 / lab_coat 1,256 / goggles 789）**；
+valid 262/1,256 不变。
+⚠️ **train 图数 1,274 → 1,306（+32）非本批 person 线动作**：并行 lc13 线（**B+42 lc13e 第五批**，纯 train 段）已将其 32 张 `lc13_*` 写入 train，
+故本批净增量**必须**用备份差分（按 stem 逐图比）而非类别总数相减——差分结果与 index 图数完全吻合，person +34 为真实值。
+⚠️ test 807 图 / 851 框同样含 lc13 线写入，非 person 线动作。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_142034.tar.gz`（1,306 文件，落库前 = B+43 底座 + lc13e 32 图）。
+done 清单 **1,115 → 1,175**；train 全库校验 **0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 干跑幂等（60 图、剔除 0 张、防误删保留 0 框、底座数字不变）✅。
+
+**队列状态与下一批**：done 1,175，剩余 **56**（P0 32 / P1 24），继续生成 **p0_u**（56 图，即**最后一批**）——person 补标队列将在 p0_u 后清空。
+`EXCLUDE_MANUAL` 本批无新增（无剔除图）。
