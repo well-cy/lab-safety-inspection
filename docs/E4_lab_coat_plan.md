@@ -872,3 +872,32 @@ done 清单 **635 → 695**；全库校验 **7,820 框，0 坏行 / 0 孤儿图 
 
 **队列状态与下一批**：done 695，现存残留未审核图按 `data/_person_review_done.txt` 实时口径继续生成 **p0_m**。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+### B+36. person 补标第十三批落库（p0_m，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_m/`，index 共 60 图（32 张出现在她的导出中 + 28 张未改动按「库内框 + 候选」直接采纳）。
+本批 **无整图剔除**（32 个图段全部为精修标签，无 `!REJECT`），连续第二批零剔除。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_m/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_m/labels \
+  --batch-index outputs/person_review_p0_m/index.txt \
+  --reject-tag p0m_reject_20261011
+```
+
+**净增量（相对 B+35 底座）**：person **+6** / mask **-1** / gloves **+1** / lab_coat **0** / goggles **+1** = **+7**。
+本批以「补漏标」为主（cppe5_703/724/762/765/807/809 等密集人群图上补齐了漏标 person），并清掉个别 mask 碎片。
+
+**执行后底座**：**train 1,228 图 / 5,987 框（person 1,380 / mask 874 / gloves 1,863 / lab_coat 1,104 / goggles 766）**；
+valid 262/1,256、test 732/584 不变。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_124720.tar.gz`（1,228 文件）。
+done 清单 **695 → 755**；全库校验 **7,827 框，0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 干跑幂等（仍为「导出 32 + 未改动采纳 28 = 60 图」，剔除 0 张、防误删保留 0 个）✅。
+
+**队列状态与下一批**：done 755，现存残留未审核图按 `data/_person_review_done.txt` 实时口径继续生成 **p0_n**。
+`EXCLUDE_MANUAL` 本批无新增（无剔除图）。
