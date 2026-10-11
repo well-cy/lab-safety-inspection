@@ -726,3 +726,45 @@ lab_coat 1,422 / goggles 1,288），0 坏行、0 孤儿。
 **执行后底座（B+29 落地，实测盘点）**：**train 1,237 图 / 6,127 框（person 1,442 / mask 920 / gloves 1,900 / lab_coat 1,104 / goggles 761）**；
 valid 262/1,256、test 732/584 不变。全库 **2,231 图 / 7,967 框**（person 1,601 / mask 1,163 / gloves 2,493 /
 lab_coat 1,422 / goggles 1,288）。done 清单 515、队列 631 不变。
+
+### B+30. 外部 PPE 数据包接入评估（4 份桌面数据，2026-10-11 下午，负责人：许婧雯）
+
+组长委托下载 4 份公开数据包（PPE.zip / ppe_public.zip / protective-equipment-detection / e58z9vu3fcusg7wzjk91n.zip）
+并转来说明，本线做了来源核查与接入评估，结论**未入库任何新数据**（评估全文见 `docs/E7_外部PPE数据集接入评估_20261011.md`）：
+
+- **PPE.zip 与 ppe_public 内 PPE_Detection 逐字节同源**（`tanish-y7iqo/ppe-detection_data-adcya` v3，6 类）→ 同数据两副本；
+  该数据集**无 lab_coat / 无 person**、工地/工业域、空标签 31%、goggles 疑混普通眼镜，**建议不投入**；
+  抽 400 张 MD5 vs 库内 2,231 张 **命中 0**，确为独立来源（非既有派生物）。
+- **CPPE-5 早已入库 358 张 `cppe5_*`** 并经 p0_c…p0_i 共 7 轮审核（E4 既定口径：整包不入库、挂起为 mask 应急备胎）→ 不新增。
+- **LVIS lab_coat 子集仅 10 张 / 46 框**（官方 category_id=620）→ 维持"当测试/回归样本"。
+- **`e58z9vu3fcusg7wzjk91n.zip` = images.cv 1,299 张 lab coat 分类图（无 bbox）**：
+  唯一对症 lab_coat 的新素材，需 ① 场景红线筛选 ② 人工标 lab_coat 检测框 ③ 按前缀+只移不删+落库前备份的既有口径接入；
+  人工标框需向组长索取 `best.pt` 做预标注加速（本地无任何 `.pt`，已被 `.gitignore` 排除）。
+- **`protective-equipment-detection/`（2.3 GB）来源待确认**：须核对 Roboflow project 与已知三条线是否重合；
+  `no_*` 类不入正类（本项目无"未佩戴"类）、`suit` 不映射 lab_coat（Coverall→lab_coat 是用户特例，不可外推）。
+
+**底座不变（B+30 无数据变更）**：train 1,237 图 / 6,127 框（person 1,442 / mask 920 / gloves 1,900 / lab_coat 1,104 / goggles 761）；
+valid 262/1,256、test 732/584；全库 **2,231 图 / 7,967 框**。done 515、队列余 631（P0 584 / P1 47），下一批 `p0_j` 不变。
+
+### B+31. person 补标第十批落库（p0_j，2026-10-11 中午，负责人：许婧雯）
+
+批次 60 图（CPPE-5 尾段 cppe5_337~509 + cppe5_50）。她导出 45 图，其中 **6 张整图剔除（首次实战新功能）**，
+39 张有效导出 + 15 张未改动即通过 = 54 图落库；备份 `labels_train_person_20261011_120348.tar.gz`（1,237 文件）；
+done 清单 515 → **575 图**（含剔除图）。
+
+1. **整图剔除 6 张 → `data/_rejected/p0j_reject_20261011/`**（图+标签一并移动，框保留在 _rejected 内可回溯）：
+   - `cppe5_385`（防疫通道排队人群，框碎到不可用）`cppe5_388`（医疗援助站，多人杂乱）
+     `cppe5_394`（路边车窗检测点，街景）`cppe5_434`（街头人群，虚焦）
+     `cppe5_452`（Scripps 感谢照，生活照非医疗操作）`cppe5_493`（ICU 隔离病房，防护服+标签难辨）
+   - 均 violate 场景红线/标注可用性，她在编辑器里用 X 键现场标记，导出带 `!REJECT`；
+     这 6 张不在 `EXCLUDE_MANUAL` 登记范围内（后续如重跑 import_cppe5_batch 会复活为 412 内的图，
+     需要再登记 385/388/394/434/452/493——见遗留）。
+2. **净增量（120348 备份 → 落库后）**：person -29、mask -22、gloves -31、goggles +3、lab_coat 0，合计 -79 框
+   （剔除图带走大头：6 张合计 person-21/mask-15/gloves-23/goggles-3；批内有效修正以删冗余候选为主）。
+3. 干跑→正式→复跑三段验证：第二次按 index 重跑「剔除 0 张、落库 54 图」幂等 ✅；
+   全库校验 0 坏行 / 0 孤儿图 / 0 孤儿标签。
+
+**执行后底座（B+31 后）**：**train 1,231 图 / 6,048 框（person 1,413 / mask 898 / gloves 1,869 / lab_coat 1,104 / goggles 764）**；
+valid 262/1,256、test 732/584 不变；全库 **2,225 图 / 7,888 框**（person 1,572 / mask 1,141 / gloves 2,462 /
+lab_coat 1,422 / goggles 1,291）。
+**遗留**：`tools/import_cppe5_batch.py` 的 `EXCLUDE_MANUAL` 需增补 {385,388,394,434,452,493}，保证重跑导入脚本不复活这 6 张。
