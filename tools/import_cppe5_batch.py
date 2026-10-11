@@ -3,7 +3,7 @@
 
 流程：
   1. picked_index.csv + final_clean.json（412：已剔 39 泄漏 + 33 批内同图冗余）
-  2. 再剔 EXCLUDE_NO（15 空挂 + 3 毒标注，按 picked 编号）
+  2. 再剔 EXCLUDE_NO（15 空挂 + 3 毒标注 + EXCLUDE_MANUAL 点名剔除，按 picked 编号）
   3. 标签几何清洗：越界裁剪、大半出图丢弃、w/h<0.01 丢弃、同类 IoU>=0.95 去重
   4. 划分：第②关 dist<=8 近重复连通分量整组同 split，按编号序轮转凑 ~10% valid，不进 test
   5. PNG→JPG(q95)，改名 cppe5_<no>_<md5[:8]>.jpg，写 import_manifest_cppe5.csv
@@ -40,6 +40,8 @@ EXCLUDE_HANGING = {611, 612, 613, 652, 707, 712, 714, 733, 737, 751, 838, 839, 8
 # AI 目检 + 画框核实：毒标注
 #   70.png  mask/gloves 框锚在 (1,1) 巨型越界废框；621/909.png goggles/mask 框在桌面未佩戴装备
 EXCLUDE_POISON = {60: "mask/gloves 框锚(1,1)越界废框", 503: "goggles/mask 框在桌面未佩戴", 770: "goggles/mask 框在桌面未佩戴"}
+# 她 2026-10-11 点名整图剔除（入库后追加，此处登记以保证脚本重跑不会复活）
+EXCLUDE_MANUAL = {153: "火葬场混乱人群（框全乱、场景不符实验室/医疗操作红线）"}
 
 
 def iou(a, b):
@@ -88,9 +90,12 @@ def main():
     no2file = {no: r["file"] for no, r in idx.items() if r["file"] in set(final_files)}
     ex_hang = {no2file[n] for n in EXCLUDE_HANGING if n in no2file}
     ex_poison = {no2file[n]: EXCLUDE_POISON[n] for n in EXCLUDE_POISON if n in no2file}
-    keep = [f for f in final_files if f not in ex_hang and f not in ex_poison]
+    ex_manual = {no2file[n] for n in EXCLUDE_MANUAL if n in no2file}
+    keep = [f for f in final_files
+            if f not in ex_hang and f not in ex_poison and f not in ex_manual]
     print(f"picked 468 → 泄漏 {len(drop_leak)} + 批内冗余 {len(drop_dup)} → 412；"
-          f"空挂 {len(ex_hang)} + 毒标注 {len(ex_poison)} → **入库 {len(keep)}**")
+          f"空挂 {len(ex_hang)} + 毒标注 {len(ex_poison)} + 点名剔 {len(ex_manual)} "
+          f"→ **入库 {len(keep)}**")
 
     # ---- 标签清洗 ----
     boxdata, drops = {}, []

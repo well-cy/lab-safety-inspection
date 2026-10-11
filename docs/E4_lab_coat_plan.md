@@ -662,6 +662,12 @@ valid 262/1,256、test 732/584 不变；全库 **2,234 图 / 7,916 框**。p0_h 
 - 落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_111759.tar.gz`（1,240 文件）；
 - done 清单 395 → **455 图**；队列 751 → **691**。
 
+**追记（11:31）：剔除已做成永久登记。** 她把同一份 p0_h 导出第三次贴回、仍要求「这张图片剔除」——核实为重复投递
+（该导出 45 图与库内数值完全一致，唯一差异就是 153 已不在库）。为防 `import_cppe5_batch.py` 重跑把 153 复活，
+已把该编号写入脚本常量 **`EXCLUDE_MANUAL = {153: …}`**（与 EXCLUDE_HANGING / EXCLUDE_POISON 同级），
+并在 `data/raw/cppe5/manual_exclusions.txt` 留存带原因的登记表。另：**p0_h 的编辑器是旧版**（无「剔除此图」按钮），
+且其 153 的图片路径已因剔除而失效——该批已收尾，**新审请用 p0_i 的编辑器**（含一键剔除 + X 键）。
+
 **执行后底座（B+27 落地）**：**train 1,239 图 / 6,118 框（person 1,434 / mask 920 / gloves 1,901 / lab_coat 1,103 / goggles 760）**；
 valid 262/1,256、test 732/584 不变。全库 **2,233 图 / 7,958 框**（person 1,593 / mask 1,163 / gloves 2,494 /
 lab_coat 1,421 / goggles 1,287），0 坏行、0 孤儿。
