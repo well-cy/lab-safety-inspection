@@ -831,3 +831,15 @@ done 清单 **575 → 635**；全库校验 **7,822 框，0 坏行 / 0 孤儿图 
 
 **队列状态与下一批**：done 635，现存残留未审核图按 `data/_person_review_done.txt` 实时口径继续生成 **p0_l**。
 `EXCLUDE_MANUAL` 待增补 {51, 52, 58}（防 `import_cppe5_batch.py` 重跑复活）。
+
+### B+33. labcoat_imagenetcv suspect 355 张整批剔除（2026-10-11 12:27，负责人：许婧雯）
+
+用户拍板「所有怀疑的直接剔除」。`tools/reject_labcoat_imagenetcv.py`（shutil.move 只移不删）把
+B+32 筛出的 suspect 355 张（too_small 96 / grayscale 95 / 广告 60 / 平铺 52 / 拼图 33 / 糊 18 / 文档 1，
+单图可多因）全部移入 `data/_rejected/labcoat_imagenetcv_screen_20261011/`（保留 split 层级，可回滚）。
+
+核对：raw 池 1,299→944；train 662+247=909、val 135+62=197、test 147+46=193 ✅；
+剔除登记 `data/_rejected/labcoat_imagenetcv_rejected_355.txt`；复跑筛查剩余 944 张 0 flags。
+
+⚠ clean 944 张仍含影棚模特照/生活照（机器无法判场景），**保留待人工过 `_clean_p01–20.jpg`**——不是漏剔。
+此批只动 `data/raw/` 候选池，**`data/lab_ppe` 底座不变**（train 1,231 图 / 6,048 框）。

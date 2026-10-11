@@ -63,3 +63,18 @@
    我抽看了拼版，预计最终可用 250–400 张，值得做，我可以按 60 张/批出标注工具；
 8. 该数据集**与库内零重叠（MD5 抽样 0/300）**，无泄漏风险；
 9. 标注需要 `best.pt` 做预标注加速，请提供。
+
+---
+
+## 五、执行记录（2026-10-11 12:27 追记）：suspect 355 张已剔除
+
+用户拍板「所有怀疑的直接剔除」。用新工具 `tools/reject_labcoat_imagenetcv.py`
+（shutil.move，**只移不删**，绝不用 os.unlink）把 suspect 355 张全部移入
+`data/_rejected/labcoat_imagenetcv_screen_20261011/`（保留 train/val/test 层级）。
+
+- 移动核对：源 1299→**944**，目标 **355**；train 909=662+247、val 197=135+62、test 193=147+46 ✅
+- 剔除登记（含原因分类）：`data/_rejected/labcoat_imagenetcv_rejected_355.txt`
+- 复跑筛查：剩余 944 张 **0 flags**，suspect 清空
+- ⚠ clean 944 张里仍有**影棚模特照/生活照/怪图**（蓝底站桩、影视妆、 glamour 特写等）——
+  机器判不了场景，这批**保留待人工过拼版**（`_clean_p01–20.jpg`），不是漏剔
+- 下一步不变：她过 20 版拼版剔非实验室场景 → 批量画框工具 → 入库三向审计
