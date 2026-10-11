@@ -44,23 +44,40 @@ SPLIT_MAP = {"train": "train", "val": "valid", "test": "test"}
 
 
 def parse_export(txt: str):
-    """解析编辑器导出 → (items, rejected, reasons)"""
+    """解析编辑器导出 → (items, rejected, reasons)
+
+    注意：编辑器在「先画了框、后点了剔除」时会写成
+        ### <stem>
+        !REJECT
+        3 0.5 0.4 0.3 0.5
+    即剔除标记与框行**同时存在**（自相矛盾）。本函数以**剔除为先**：
+    只要出现 !REJECT，该图一律剔除，其框行丢弃（但记录下来供人工复核）。
+    """
     items, rejected, reasons, cur = {}, set(), {}, None
+    conflict = {}   # stem -> 该图在剔除标记之后仍写出的框数（提示她可能误操作）
     for ln in txt.splitlines():
         ln = ln.strip()
         if ln.startswith("###"):
             cur = ln[3:].strip()
             items.setdefault(cur, [])
-        elif not cur:
             continue
-        elif ln.upper().startswith("!REJECT"):
+        if not cur:
+            continue
+        if ln.upper().startswith("!REJECT"):
             rejected.add(cur)
             reasons[cur] = ln[7:].strip()
-            items.pop(cur, None)
-        elif len(ln.split()) == 5:
+            items[cur] = []          # 清空（若之前已收框），且保留键避免后续 KeyError
+            continue
+        if len(ln.split()) == 5:
             p = ln.split()
-            items[cur].append((int(p[0]), *(round(float(v), 6) for v in p[1:5])))
-    return items, rejected, reasons
+            items.setdefault(cur, []).append(
+                (int(p[0]), *(round(float(v), 6) for v in p[1:5])))
+            if cur in rejected:
+                conflict[cur] = conflict.get(cur, 0) + 1
+    # 剔除图不保留任何框
+    for s in rejected:
+        items[s] = []
+    return items, rejected, reasons, conflict
 
 
 def backup_labels() -> Path | None:
@@ -82,6 +99,8 @@ def main() -> int:
     ap.add_argument("--stem2rel", required=True, help="_stem2rel.tsv")
     ap.add_argument("--accept-from-ws", action="store_true",
                     help="批次内未出现在导出中的图，直接采用工作区标签（她回「都对」时用）")
+    ap.add_argument("--skip-stems", default="",
+                    help="逗号分隔 stem：跳过不落库（待补标/复核，如漏标 lab_coat 的图）")
     ap.add_argument("--reject-tag", default="", help="剔除去向目录名，默认 lc13_reject_<日期>")
     ap.add_argument("--no-backup", action="store_true")
     ap.add_argument("--dry", action="store_true")
@@ -109,14 +128,22 @@ def main() -> int:
 
     # 1) 应用导出：覆盖工作区标签
     n_exp, rejects, reasons = 0, set(), {}
+    conflict = {}
     if args.export and Path(args.export).exists():
-        items, rejects, reasons = parse_export(Path(args.export).read_text(encoding="utf-8"))
+        items, rejects, reasons, conflict = parse_export(
+            Path(args.export).read_text(encoding="utf-8"))
         for stem, boxes in items.items():
+            if stem in rejects:
+                continue
             (ws / f"{stem}.txt").write_text(
                 "\n".join(f"{c} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}" for c, cx, cy, w, h in boxes)
                 + ("\n" if boxes else ""), encoding="utf-8", newline="\n")
             n_exp += 1
         print(f"  导出覆盖 {n_exp} 图 · 整图剔除 {len(rejects)} 图")
+        if conflict:
+            print(f"  ⚠ 剔除标记与框行并存 {len(conflict)} 图（已按剔除处理，框行丢弃）：")
+            for s, k in list(conflict.items())[:10]:
+                print(f"     · {s}（{k} 个框被丢弃）")
     else:
         print("  无导出（--export 为空/不存在），仅采用工作区标签")
 
@@ -128,6 +155,9 @@ def main() -> int:
         args.reject_tag or f"lc13_reject_{time.strftime('%Y%m%d')}")
 
     for stem, rel in sorted(s2r.items()):
+        if stem in {s.strip() for s in args.skip_stems.split(",") if s.strip()}:
+            stat["跳过（待补标）"] += 1
+            continue
         raw_split = rel.split("/", 1)[0]
         lab_split = SPLIT_MAP.get(raw_split)
         if lab_split is None:
@@ -165,13 +195,19 @@ def main() -> int:
             stat["无框（跳过）"] += 1
             continue
 
-        # 校验：只允许 lab_coat(3)；坐标合法
-        bad = [b for b in rows if b[0] != 3 or not (0 <= b[1] <= 1 and 0 <= b[2] <= 1
-                                                    and 0 < b[3] <= 1 and 0 < b[4] <= 1)]
+        # 校验：允许五类 0-4（她实际会顺手把 person/gloves 等一起标）；
+        # 每张保留图必须至少有 1 个 lab_coat(3)（本批来源就是白大褂图）
+        bad = [b for b in rows if b[0] not in (0, 1, 2, 3, 4)
+               or not (0 <= b[1] <= 1 and 0 <= b[2] <= 1
+                       and 0 < b[3] <= 1 and 0 < b[4] <= 1)]
         if bad:
             stat["坐标/类别异常"] += 1
             print(f"  ⚠ {rel}: 异常框 {bad[:3]}")
             continue
+        if not any(b[0] == 3 for b in rows):
+            stat["无lab_coat框（警告保留）"] += 1
+            print(f"  ⚠ {rel}: 保留了但没有 lab_coat 框（类别 "
+                  f"{sorted({b[0] for b in rows})}），请复核")
 
         lab_txt = LAB / "labels" / lab_split / (new_stem + ".txt")
         img_dst = LAB / "images" / lab_split / (new_stem + src_img.suffix.lower())

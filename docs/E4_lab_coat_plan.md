@@ -974,10 +974,75 @@ person 大增主因 istockphoto 系列 10 图每张 2–4 个 person 大框入�
 
 **执行后底座**：**train 1,222 图 / 6,017 框（person 1,431 / mask 865 / gloves 1,849 / lab_coat 1,103 / goggles 769）**；
 valid 262/1,256、test 732/584 不变。
-备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_124720.tar.gz` 为落库前快照（1,228 文件，对应 B+36 底座）。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_125621.tar.gz` 为落库后快照（1,222 文件，person 1,431 / sum 6,017，与下方底座一致）。
 done 清单 **755 → 815**；全库校验 **7,857 框，0 坏行 / 0 孤儿图 / 0 孤儿标签**。
 
 **验证**：按 index 复跑幂等（剔除 0 张、底座数字逐项一致）✅。
 
 **队列状态与下一批**：done 815，剩余 331（P0 284 / P1 47），继续生成 **p0_o**。
 `EXCLUDE_MANUAL` 待评估：p0_n 剔除 6 张的 cppe5 原编号 {82, 84, 85, 87, 90, 93}（需按 md5 后缀核对唯一性后再登记）。
+
+---
+
+### B+38. lc13a 首批画框落库（60 张 → test +28 / 剔除 31 / 跳过 1，2026-10-11 下午，负责人：许婧雯）
+
+**她贴回编辑器导出**（60 图全覆盖：29 带框 / 31 剔除）。**重要发现：她不止画了 lab_coat，
+而是把可见的五类全标了**（person 48 / lab_coat 41 / gloves 11 / goggles 8 / mask 1）——
+相当于免费补了其他类标注。落库端校验随之从「只许 cls=3」放宽为五类 0-4，并新增
+「保留图必须 ≥1 个 lab_coat」警告与 `--skip-stems` 参数。
+
+**质检**（自动 + 拼图人工复核 `_review_kept_29.jpg` / `_review_rejected_18.jpg`）：
+- 41 个 lab_coat 框 100% 被对应 person 框包含（覆盖率>50%），几何一致 ✅
+- 剔除 31 张 judgment 合理：穿白大褂的婴孩、万圣节妆、钢笔商品图、航拍人群等
+- 2 图剔除标记与框行并存（0BPPMLZZAGEY / 0WLMZ85M5N7U）→ 按剔除处理、框丢弃；
+  parse_export 已修 bug（原版 pop 键后遇框行 KeyError 崩溃）并加冲突告警
+- `2MOXBGMXQ21M` 为 **Tyvek coverall**（非白大褂，她未标 lab_coat 是正确判断），
+  其 mask/goggles/gloves 框有效 → 保留入库
+- `193WAVBL1GB6` 医生白大褂漏标 lab_coat（只标 person）→ `--skip-stems` 扣下待补
+
+**落库**：**test +28 图 / +108 框（lab_coat +41）**，前缀 `lc13_`；
+剔除 31 张原图移入 `data/_rejected/lc13a_reject_20261011/`（只移不删，可回滚）。
+备份 `data/lab_ppe/_label_backup/labels_labcoat_lc13_20261011_130948.tar.gz`。
+全库校验 **7,965 框，0 坏行 / 0 孤儿图 / 0 孤儿标签** ✅。
+源池剩余 **913 张**（944 − 31 剔除）。
+
+**注意**：本批全部落在 **test** split（源即 raw/test/）。后续 E3 口径的 test 评测
+将自动纳入这批更难的实拍图（非图库摆拍），对 lab_coat 泛化评估更有意义。
+
+**下一步**：她补 `193WAVBL1GB6` 的 lab_coat 框（1 个框即可，可用编辑器重开单图批）；
+继续 `lc13b`（队列 60~119）。
+
+### B+39. person 补标第十五批落库（p0_o，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_o/`，index 共 60 图（20 张出现在她的导出中 + 40 张未改动按「库内框 + 候选」直接采纳）。
+本批 **无整图剔除**，且 **20 张精修图全部是 istockphoto 视频抽帧**（`istockphoto-{1389456266,1418389265,1431802973,1496646047,2151031450}` 五个片段，医护穿脱 PPE 连续帧）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_o/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_o/labels \
+  --batch-index outputs/person_review_p0_o/index.txt \
+  --reject-tag p0o_reject_20261011
+```
+
+**净增量（备份差分实测，相对 B+38 底座）**：person **+113** / mask **0** / gloves **-3** / lab_coat **+1** / goggles **-1** = **+110**。
+（口径说明：本轮改用 **tar 备份与磁盘逐图差分**，而非类别总数相减——因为并行会话的 lc13 lab_coat 线正在同库写入，
+总数相减会被污染。差分结果 60 图变化，与本批 index 完全吻合，可信。）
+
+**⚠️ 跨线影响记录**：`data/lab_ppe` 的 **test split 已由并行会话 lc13 线写入 28 张 lab_coat 图**
+（`lc13_*`，12:03 落盘）→ test 由 732 图/584 框变为 **760 图/692 框**。**这不是 person 线的动作**，
+person 线只写 train。后续 person 批次对比 base 时，test 数字请以 lab_coat 线口径为准。
+
+**执行后底座**：**train 1,222 图 / 6,127 框（person 1,544 / mask 865 / gloves 1,846 / lab_coat 1,104 / goggles 768）**；
+valid 262/1,256 不变；test 760/692（含 lc13）。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_131051.tar.gz`（1,222 文件，落库前 = B+38 底座）。
+done 清单 **815 → 875**；train 全库校验 0 坏行 / 0 孤儿。
+「防误删保留框 11 个」——istockphoto 系列的 lab_coat 大框在她导出中未出现（IoU<0.5）但按原框保留。
+
+**验证**：按 index 干跑幂等（60 图、剔除 0 张、底座数字不变）✅。
+
+**队列状态与下一批**：done 875，剩余 271（P0 224 / P1 47），继续生成 **p0_p**。
+`EXCLUDE_MANUAL` 本批无新增（无剔除图）。
