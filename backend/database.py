@@ -13,8 +13,11 @@ import sqlite3
 from datetime import datetime, date
 from pathlib import Path
 
+from backend.config import config
+
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "backend" / "labsafety.db"
+# 数据库路径来自集中配置（支持 LABSAFETY_DB_PATH 环境变量覆盖）
+DB_PATH = config.DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS laboratories (
@@ -121,6 +124,15 @@ def load_areas(lab_id: int):
     return areas
 
 
+def lab_exists(lab_id: int) -> bool:
+    """判断实验室是否存在（用于 API 参数校验，把外键崩溃转成 4xx）"""
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM laboratories WHERE id=?",
+                       (lab_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
 def save_detection_record(lab_id, source_type, source_name, person_count,
                           violation_count, normal_count, process_time_ms) -> int:
     conn = get_conn()
@@ -169,31 +181,129 @@ def save_event_dicts(record_id, lab_id, event_dicts: list):
     conn.close()
 
 
-def query_violations(vtype=None, severity=None, date_str=None, lab_id=None,
-                     limit=200, offset=0):
-    sql = ("SELECT v.*, l.name AS lab_name FROM violation_events v"
-           " LEFT JOIN laboratories l ON v.lab_id = l.id WHERE 1=1")
+# 违规查询允许的排序字段（白名单，拼接进 SQL 前校验，避免注入）
+VIOLATION_SORT_FIELDS = {
+    "id": "v.id",
+    "created_at": "v.created_at",
+    "severity": "v.severity",
+    "area_name": "v.area_name",
+}
+
+
+def _escape_like(value: str) -> str:
+    """
+    转义 SQL LIKE 的通配符，使用户输入按**字面含义**匹配。
+
+    问题背景：违规类型筛选用的是 `LIKE '%' || ? || '%'`，而 `%` 与 `_`
+    在 LIKE 中有特殊含义。实测传入 `vtype=%` 时会返回**全部**记录
+    （筛选形同虚设），传入 `vtype=_` 同样返回全部 —— 用户会以为筛选生效，
+    实际拿到的是全量数据。
+
+    转义顺序很重要：必须先转义反斜杠本身，否则会把后面新加的反斜杠二次转义。
+    调用方需配合 `LIKE ? ESCAPE '\\'` 使用。
+    """
+    return (str(value)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_"))
+
+
+def _violation_where(vtype=None, severity=None, date_str=None, lab_id=None,
+                     date_from=None, date_to=None):
+    """
+    构造违规查询的 WHERE 片段与参数。
+    query_violations / count_violations / 导出功能共用，保证筛选口径一致。
+    """
+    where = " WHERE 1=1"
     args = []
     if vtype:
-        sql += " AND v.violation_types LIKE ?"
-        args.append(f"%{vtype}%")
+        where += " AND v.violation_types LIKE ? ESCAPE '\\'"
+        args.append(f"%{_escape_like(vtype)}%")
     if severity:
-        sql += " AND v.severity = ?"
+        where += " AND v.severity = ?"
         args.append(severity)
     else:
-        sql += " AND v.severity != '正常'"  # 默认隐藏正常评估记录
+        where += " AND v.severity != '正常'"  # 默认隐藏正常评估记录
     if date_str:
-        sql += " AND date(v.created_at) = ?"
+        where += " AND date(v.created_at) = ?"
         args.append(date_str)
+    if date_from:
+        where += " AND date(v.created_at) >= ?"
+        args.append(date_from)
+    if date_to:
+        where += " AND date(v.created_at) <= ?"
+        args.append(date_to)
     if lab_id:
-        sql += " AND v.lab_id = ?"
+        where += " AND v.lab_id = ?"
         args.append(lab_id)
-    sql += " ORDER BY v.id DESC LIMIT ? OFFSET ?"
-    args += [limit, offset]
+    return where, args
+
+
+def query_violations(vtype=None, severity=None, date_str=None, lab_id=None,
+                     limit=200, offset=0, date_from=None, date_to=None,
+                     sort="id", order="desc"):
+    """
+    查询违规记录。
+
+    新增参数均为可选，原有调用方式完全不变（向后兼容）：
+      date_from / date_to : 日期区间过滤（含端点，YYYY-MM-DD）
+      sort                : id | created_at | severity | area_name（白名单）
+      order               : asc | desc
+    """
+    where, args = _violation_where(vtype, severity, date_str, lab_id,
+                                   date_from, date_to)
+    col = VIOLATION_SORT_FIELDS.get(str(sort).lower(), "v.id")
+    direction = "ASC" if str(order).lower() == "asc" else "DESC"
+    sql = ("SELECT v.*, l.name AS lab_name FROM violation_events v"
+           " LEFT JOIN laboratories l ON v.lab_id = l.id"
+           f"{where} ORDER BY {col} {direction}, v.id DESC LIMIT ? OFFSET ?")
+    args = args + [limit, offset]
     conn = get_conn()
     rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
     conn.close()
     return rows
+
+
+def count_violations(vtype=None, severity=None, date_str=None, lab_id=None,
+                     date_from=None, date_to=None) -> int:
+    """按与 query_violations 相同的筛选条件统计总条数（用于分页 total_count）"""
+    where, args = _violation_where(vtype, severity, date_str, lab_id,
+                                   date_from, date_to)
+    conn = get_conn()
+    row = conn.execute(
+        f"SELECT COUNT(*) AS c FROM violation_events v{where}", args).fetchone()
+    conn.close()
+    return int(row["c"])
+
+
+def _count_violation_types(conn, where: str, args: list,
+                           limit: int | None = None) -> list:
+    """
+    按「单个违规类型」统计数量。
+
+    violation_events.violation_types 存的是逗号分隔字符串（如
+    "未佩戴手套,未穿实验服,未佩戴口罩"）。若直接 `GROUP BY violation_types`
+    整串分组，多类型违规会被当成一个独立类别，统计图表就会出现
+    "未佩戴手套,未穿实验服,未佩戴口罩" 这种无意义的分类，
+    与 INTERFACE_CONTRACT 6.3 示例（每项为**单个**类型）不符。
+
+    因此取出后在 Python 侧拆分计数。排序按（次数降序, 类型名升序），
+    保证结果稳定、可重复比对。
+
+    where 需自带前导空格，如 " WHERE severity != '正常'"。
+    """
+    counts: dict[str, int] = {}
+    for row in conn.execute(
+            f"SELECT violation_types FROM violation_events{where}",
+            args).fetchall():
+        for item in str(row["violation_types"]).split(","):
+            item = item.strip()
+            if item:
+                counts[item] = counts.get(item, 0) + 1
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    if limit is not None:
+        items = items[:limit]
+    return [{"t": k, "c": v} for k, v in items]
 
 
 def dashboard_stats():
@@ -210,10 +320,10 @@ def dashboard_stats():
     normal = conn.execute(
         "SELECT COUNT(*) c FROM violation_events WHERE date(created_at)=?"
         " AND severity='正常'", (today,)).fetchone()["c"]
-    by_type = [dict(r) for r in conn.execute(
-        "SELECT violation_types t, COUNT(*) c FROM violation_events"
-        " WHERE date(created_at)=? AND severity != '正常'"
-        " GROUP BY violation_types ORDER BY c DESC LIMIT 10", (today,)).fetchall()]
+    # 按单个违规类型统计（多类型违规会分别计入各自类型，而非合并成一个类别）
+    by_type = _count_violation_types(
+        conn, " WHERE date(created_at)=? AND severity != '正常'",
+        [today], limit=10)
     by_day = [dict(r) for r in conn.execute(
         "SELECT date(created_at) d, COUNT(*) c FROM violation_events"
         " WHERE severity != '正常' AND created_at >= date('now','-6 days','localtime')"
@@ -235,13 +345,102 @@ def dashboard_stats():
 def statistics():
     """统计页数据：每日违规、各类违规数量、正常/违规比例"""
     conn = get_conn()
+    # 取「最近 30 天」：必须先按日期倒序取前 30 条，再反转回升序。
+    # 原实现 ORDER BY d ASC LIMIT 30 取到的是**最早**的 30 天 ——
+    # 实测造 40 天数据时返回 08-24~09-22，完全不含今天（10-02）；
+    # 即数据一旦超过 30 天，统计页就会显示过时区间并丢失最新数据。
     by_day = [dict(r) for r in conn.execute(
         "SELECT date(created_at) d, COUNT(*) c FROM violation_events"
-        " WHERE severity != '正常' GROUP BY d ORDER BY d LIMIT 30").fetchall()]
-    by_type = [dict(r) for r in conn.execute(
-        "SELECT violation_types t, COUNT(*) c FROM violation_events"
-        " WHERE severity != '正常' GROUP BY violation_types ORDER BY c DESC").fetchall()]
+        " WHERE severity != '正常' GROUP BY d ORDER BY d DESC LIMIT 30").fetchall()]
+    by_day.reverse()   # 反转回时间升序，便于前端直接按顺序绘制折线
+
+    # 按单个违规类型统计（同 dashboard_stats，避免多类型记录被合并成一个类别）
+    by_type = _count_violation_types(conn, " WHERE severity != '正常'", [])
     by_severity = [dict(r) for r in conn.execute(
         "SELECT severity s, COUNT(*) c FROM violation_events GROUP BY severity").fetchall()]
     conn.close()
     return {"by_day": by_day, "by_type": by_type, "by_severity": by_severity}
+
+
+# ---------------- 配置管理（实验室 / 区域 / PPE 规则） ----------------
+# 说明：原先这些 SQL 直接写在 backend/main.py 里（技术债清单 #5：
+#       "设置端点裸 SQL 绕过 database 层"），本次统一收敛到这里。
+
+def list_labs_with_areas() -> list:
+    """
+    读取全部实验室，及其下属区域与各区域的 PPE 要求（供 GET /api/settings 使用）。
+
+    统一在此加 ORDER BY，保证返回顺序稳定：
+      - laboratories / areas 按 id 升序
+      - required_ppe 按 safety_rules.id（即配置时的顺序）升序
+
+    修复的问题：原实现无 ORDER BY，SQLite 返回顺序不保证，实测
+    required_ppe 会返回 ["gloves","lab_coat","mask"]，与
+    docs/INTERFACE_CONTRACT.md 6.8 示例的 ["mask","gloves","lab_coat"] 不一致；
+    若前端按顺序渲染会显示错乱。加 ORDER BY 后与契约一致。
+    """
+    conn = get_conn()
+    labs = [dict(r) for r in conn.execute(
+        "SELECT * FROM laboratories ORDER BY id").fetchall()]
+    for lab in labs:
+        lab["areas"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM areas WHERE lab_id=? ORDER BY id",
+            (lab["id"],)).fetchall()]
+        for area in lab["areas"]:
+            area["required_ppe"] = [r["ppe_type"] for r in conn.execute(
+                "SELECT ppe_type FROM safety_rules WHERE area_id=? AND required=1"
+                " ORDER BY id", (area["id"],)).fetchall()]
+    conn.close()
+    return labs
+
+
+def create_lab(name: str, description: str = "") -> int:
+    """
+    新建实验室，返回新记录 id。
+    名称重复时抛出 sqlite3.IntegrityError，由调用方（API 层）转为 400。
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO laboratories(name, description) VALUES(?,?)",
+            (name, description))
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def create_area(lab_id: int, name: str, x1: float, y1: float, x2: float,
+                y2: float, required_ppe: list) -> int:
+    """
+    新建区域并写入其 PPE 要求，返回新区域 id。
+    required_ppe 为该区域要求的 PPE 业务类别列表（如 ["mask","gloves"]）。
+    lab_id 不存在时抛出 sqlite3.IntegrityError（外键约束）。
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO areas(lab_id, name, x1, y1, x2, y2) VALUES(?,?,?,?,?,?)",
+            (lab_id, name, x1, y1, x2, y2))
+        area_id = int(cur.lastrowid)
+        for ppe in required_ppe:
+            conn.execute("INSERT INTO safety_rules(area_id, ppe_type, required)"
+                         " VALUES(?,?,1)", (area_id, ppe))
+        conn.commit()
+        return area_id
+    finally:
+        conn.close()
+
+
+def delete_area(area_id: int) -> None:
+    """
+    删除区域及其 PPE 规则（级联清理 safety_rules）。
+    幂等：area_id 不存在时不报错。
+    """
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM safety_rules WHERE area_id=?", (area_id,))
+        conn.execute("DELETE FROM areas WHERE id=?", (area_id,))
+        conn.commit()
+    finally:
+        conn.close()
