@@ -1425,3 +1425,74 @@ train 段进度：**276/662（约 42%）**；val 段 135 张未动。
 
 **质检备注**：本批影棚/图库摆拍占比回升（工作证照、圣诞帽摆拍、婚礼白礼服边缘样本等），
 亦有 FFYHC2LMWGUZ 集市人群（16 person 逐个标）等高密度样本，框几何正确。
+
+---
+
+### B+49. lc13i 第九批画框落库（60 张 → train +42 / 剔除 18，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（42 保留 / 18 剔除），0 坏行 / 0 越界 / 0 剔除冲突。
+**✅ `BU4ZPSTGQ7ST` 悬案关闭**：她最终按 X 整图剔除（连续三批不标 → 明确不收），已移入 `_rejected`。
+**⚠️ 新口径问题——coverall 两张保留但无 lab_coat**：
+`HYXBKF2PA0HW`（实验室穿白色连体防护服+蓝手套，标 gloves+person）、
+`KIF16IEVN1QV`（工业 coverall+全面罩+长胶手套，标 mask+goggles+person）。
+两图均为 **coverall 连体服**，她保留并标了其他 PPE 类但**未标 lab_coat**——
+与并行会话 route A 决策（coverall 也算 lab_coat）存在口径分歧，待统一：
+若按 route A，这两张需补 lab_coat 框；若维持她的区分口径，则维持现状
+（其他类框有效已入库，对 lab_coat 训练无贡献）。
+**落库**：**train +42 图 / +215 框（person 93 / lab_coat 80 / gloves 21 / goggles 15 / mask 6）**；
+剔除 18 → `data/_rejected/lc13i_reject_20261011/`。
+全库校验 **9,739 框（train 7,632 / valid 1,256 / test 851），0 坏行 / 0 孤儿** ✅。
+done 清单 **476 → 536**；源池剩余 **735 张**（train 525 / val 135 / test 75）。
+**待补标队列清零**（BU4Z 已剔除，无悬留图）。
+
+**lc13 系累计（B+38~49）**：**+327 图 / +1,379 框（lab_coat +545 / person +645）**，剔除 208 张。
+train 段进度：**318/662（约 48%）**；val 段 135 张未动。
+复核拼图：`outputs/labcoat_label_review_lc13i/_review_kept_42.jpg` / `_review_rejected_18.jpg`。
+
+**质检备注**：本批高密度样本多（HW1LZAE8IMZ0 13 白大褂+6 goggles、JZO923R26UB5 7+8、
+K34ROO7M8LR2 9 白大褂逐件分开标），标注质量好；含 J2X7IMYJSQQH 歌手白外套、
+HVYEMUIXNQRU 壁画前摆拍等边缘样本，框几何正确留作难度样本。
+
+---
+
+### B+50. lc13j 第十批画框落库（60 张 → train +44 / 剔除 15 / 待补 1，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（45 保留 / 15 剔除），0 坏行 / 0 越界 / 0 剔除冲突。
+**⚠️ 新待补 1 图**：`MLMW7NETUH4T`（诊室写字白大褂女医生，典型 lab_coat 场景但只标了
+person，明显漏标非 coverall 口径问题）→ `--skip-stems` 扣下，图留源池，done 未登记，下批队首补框。
+**B+49 遗留确认**：coverall 两张（HYXBKF2PA0HW/KIF16IEVN1QV）维持她的区分口径现状，
+若她后续按 route A 补框另行处理。
+**落库**：**train +44 图 / +147 框（person 72 / lab_coat 59 / gloves 8 / goggles 8 / mask 1）**；
+剔除 15 → `data/_rejected/lc13j_reject_20261011/`。
+全库校验 **9,886 框（train 7,779 / valid 1,256 / test 851），0 坏行 / 0 孤儿** ✅。
+done 清单 **536 → 595**；源池剩余 **720 张**（train 510 / val 135 / test 75）。
+
+**lc13 系累计（B+38~50）**：**+371 图 / +1,526 框（lab_coat +604 / person +716）**，剔除 223 张。
+train 段进度：**362/662（约 55%）**；val 段 135 张未动。
+复核拼图：`outputs/labcoat_label_review_lc13j/_review_kept_45.jpg` / `_review_rejected_15.jpg`。
+
+**质检备注**：本批图库人像摆拍占比高（白大褂职业照），真实实验室操作场景偏少；
+KMJEABN5KEOC 首次出现 mask(1) 框（外科口罩医生）。框几何均正确。
+
+---
+
+### B+51. lc13k 第十一批画框落库（300 张 → train +169 / valid +64 / 剔除 66 / 待补 1，2026-10-11 傍晚，负责人：许婧雯）
+
+**本批为一次性 300 张大批次**（应她要求），导出 300 张中 299 张有内容、**1 张漏标**。
+**⚠️ 新待补 1 图**：`ZSMH2IW3X5Z8`（序位 211/300，train/lab_coat）导出中未出现，
+判定为她导出时漏掉（非剔除）→ `--skip-stems` 扣下，图留源池，done 未登记，下批队首补框。
+**落库**：**train +169 图 / valid +64 图**，共 **+899 框**
+（person 445 / lab_coat 365 / gloves 46 / goggles 35 / mask 8）；
+剔除 66 → `data/_rejected/lc13k_reject_20261011/`（全为 val 段，队列已跨入 val）。
+保留但无 lab_coat 框 3 图（警告保留）：`Q6OQ3CFL3R9E`(0,1)、`VV7ISCWXHC89`(0)、`YYLDEL5TZR5N`(0,2)。
+
+**里程碑：首次带入 valid 段**（+64 图），train 段队列接近尾声，本轮起队列混入 val 图。
+全库校验 **10,785 框（train 8,419 / valid 1,515 / test 851），0 坏行 / 0 孤儿** ✅。
+done 清单 **595 → 894**；源池剩余 **421 张**（train 约 286 / val 71 / test 75）。
+
+**lc13 系累计（B+38~51）**：**+604 图 / +2,425 框（lab_coat +969 / person +1,161）**，剔除 289 张。
+复核拼图：`outputs/labcoat_label_review_lc13k/_review_kept_233.jpg` / `_review_rejected_66.jpg`。
+
+**质检备注**：本批高质量实验室/医疗实拍比例上升，goggles(35)/mask(8) 明显增多，
+P7QRUE1S3DC3/SLXRD2M32X7W/H9G30BLJXKGP 等大群体密集图逐件分开标注，质量好；
+4 类（goggles）标注显著增加是 E3 跨域问题的对症改善。
