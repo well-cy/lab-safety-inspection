@@ -938,3 +938,46 @@ done 清单 **695 → 755**；全库校验 **7,827 框，0 坏行 / 0 孤儿图 
 
 **队列状态**：944 张待标注，建议 **60 张/批**，首批 `lc13a` 已生成。标注完成后按既有口径
 落库（`lc13_` 前缀、三向审计、落库前 tar 备份、E4 记 B+NN）。
+
+### B+37. person 补标第十四批落库（p0_n，2026-10-11 中午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_n/`，index 共 60 图（30 张出现在她的导出中 + 30 张未改动按「库内框 + 候选」直接采纳）。
+本批 **6 张整图剔除**（`!REJECT`），并首次出现 **istockphoto 视频抽帧图**（10 张 `istockphoto-*-mp4-*` 系列，医护穿脱 PPE 剧照，含 lab_coat 大框，全部正常落库）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_n/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_n/labels \
+  --batch-index outputs/person_review_p0_n/index.txt \
+  --reject-tag p0n_reject_20261011
+```
+
+**整图剔除明细（6 张）**：剔除拼版 `outputs/person_review_p0_n/_rejected_sheet.jpg` 已目视复核，均为「密集人群/混乱场景，框碎到不可用或主体非实验室操作」：
+
+| 图 | 情况 |
+|---|---|
+| `cppe5_82_9b3c1c33` | 服装厂/仓库杂乱全景，人群细碎、非实验室操作 |
+| `cppe5_84_6e3a3d51` | 户外多人防护服休息场景，构图混乱 |
+| `cppe5_85_562acd11` | 夜间户外隔离转移人群，框碎 |
+| `cppe5_87_1789a26c` | 暗光特写，主体遮挡严重 |
+| `cppe5_90_f85dd284` | 帐篷内杂乱，水印（PARTHA PAUL） |
+| `cppe5_93_702078e3` | 病房多人杂乱，框碎到不可用 |
+
+剔除图（jpg+txt 扁平结构）已移入 `data/_rejected/p0n_reject_20261011/`，并计入 done 清单。
+
+**净增量（相对 B+36 底座）**：person **+51** / mask **-9** / gloves **-14** / lab_coat **-1** / goggles **+3** = **+30**。
+person 大增主因 istockphoto 系列 10 图每张 2–4 个 person 大框入库；剔除 6 张带走部分 mask/gloves 碎框。
+「防误删保留框 4 个」——`--keep-classes 3` 生效：4 个库内 lab_coat 框在她导出中消失（IoU<0.5）但按原框保留。
+
+**执行后底座**：**train 1,222 图 / 6,017 框（person 1,431 / mask 865 / gloves 1,849 / lab_coat 1,103 / goggles 769）**；
+valid 262/1,256、test 732/584 不变。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_124720.tar.gz` 为落库前快照（1,228 文件，对应 B+36 底座）。
+done 清单 **755 → 815**；全库校验 **7,857 框，0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 复跑幂等（剔除 0 张、底座数字逐项一致）✅。
+
+**队列状态与下一批**：done 815，剩余 331（P0 284 / P1 47），继续生成 **p0_o**。
+`EXCLUDE_MANUAL` 待评估：p0_n 剔除 6 张的 cppe5 原编号 {82, 84, 85, 87, 90, 93}（需按 md5 后缀核对唯一性后再登记）。
