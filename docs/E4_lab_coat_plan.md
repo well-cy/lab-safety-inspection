@@ -710,3 +710,19 @@ lab_coat 1,421 / goggles 1,287），0 坏行、0 孤儿。
 **执行后底座（B+28 落地，含废框剔除）**：**train 1,239 图 / 6,144 框（person 1,449 / mask 924 / gloves 1,906 / lab_coat 1,104 / goggles 761）**；
 valid 262/1,256、test 732/584 不变。全库 **2,233 图 / 7,984 框**（person 1,608 / mask 1,167 / gloves 2,499 /
 lab_coat 1,422 / goggles 1,288），0 坏行、0 孤儿。
+### B+29. p0_i 复核点名整图剔除 ×2：cppe5_188 / cppe5_328（2026-10-11 下午，负责人：许婧雯）
+
+她截图点名两张 p0_i 批内图整图剔除（截图无文件名，按画面匹配 p0_i 批次确认编号）：
+
+1. **cppe5_188_31ada0d1**（8 框：person4/mask2/gloves2）：马路/摩托车街景，
+   违反场景红线（非实验室/科研/医疗操作），剔除；
+2. **cppe5_328_305277ee**（10 框：person2/mask2/gloves4）：ICU 抢救场景为**双重曝光重影**合成，
+   框无法标稳，剔除。
+
+- 图+标签移入 `data/_rejected/cppe5_review_20261011/`（与 cppe5_153 同批）；
+- 登记 `data/raw/cppe5/manual_exclusions.txt`，`tools/import_cppe5_batch.py` EXCLUDE_MANUAL 增补
+  188/328，保证脚本重跑不复活；p0_j 批次不含这两张，无需改队列。
+
+**执行后底座（B+29 落地，实测盘点）**：**train 1,237 图 / 6,127 框（person 1,442 / mask 920 / gloves 1,900 / lab_coat 1,104 / goggles 761）**；
+valid 262/1,256、test 732/584 不变。全库 **2,231 图 / 7,967 框**（person 1,601 / mask 1,163 / gloves 2,493 /
+lab_coat 1,422 / goggles 1,288）。done 清单 515、队列 631 不变。
