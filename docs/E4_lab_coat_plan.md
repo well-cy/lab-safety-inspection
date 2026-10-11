@@ -1289,3 +1289,52 @@ done 清单 **1,115 → 1,175**；train 全库校验 **0 坏行 / 0 孤儿图 / 
 
 **队列状态与下一批**：done 1,175，剩余 **56**（P0 32 / P1 24），继续生成 **p0_u**（56 图，即**最后一批**）——person 补标队列将在 p0_u 后清空。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+---
+
+### B+45. person 补标第二十一批落库（p0_u，最后一批核心，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_u/`，index 共 56 图（**5 张**出现在她的导出中 + 51 张未改动按「库内框 + 候选」直接采纳）。
+本批为 person 补标队列的**收尾批**，导出精修仅 5 张（`lcsi_frame_00101` + `cppe5_461_3dc58375` + `web_0355` + `web_0386` + `web_p110877089`），
+其余 51 张经她确认「未改动即通过」，**无整图剔除**。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_u/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_u/labels \
+  --batch-index outputs/person_review_p0_u/index.txt \
+  --reject-tag p0u_reject_20261011
+```
+
+**净增量（备份差分实测，相对 B+44 底座）**：**+23 框**。
+备份 vs 磁盘逐图差分：1347 → 1347 图（无新增/无删除图），common 段 **+23 框**，
+对应导出：`cppe5_461_3dc58375` +3（原空标签→person+mask+goggles）、`web_p110877089` +2，及 `web_*` 系列多张 0→1~2。
+（`--keep-classes 3` 防误删保留 **0** 个框。）
+
+**执行后底座**：**train 1,347 图 / 7,063 框（person 2,200 / mask 865 / gloves 1,878 / lab_coat 1,328 / goggles 792）**；
+valid 262/1,256 不变。
+⚠️ **train 图数 1,306 → 1,347（+41）非本批 person 线动作**：并行 lc13 线继续往 train 写 `lc13_*`。
+故本批净增量**必须**用备份差分（按 stem 逐图比）而非类别总数相减——差分结果与 index 图数完全吻合，person +23 为真实值。
+⚠️ test 807 图 / 851 框同样含 lc13 线写入，非 person 线动作。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_143317.tar.gz`（1,347 文件，落库前 = B+44 底座 + lc13 新增）。
+done 清单 **1,175 → 1,231**；train 全库校验 **0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 干跑幂等（56 图、剔除 0 张、防误删保留 0 框、底座数字不变）✅。
+
+**⚠️ 队列与 lc13 线交互（重要）**：p0_u 落库后重扫队列，**仍有 41 图待审，全部为 `lc13_*` 系列**
+（`lc13_8ISUS0WL1POW` 等，即并行 lc13 线新写入 train 段的 lab_coat 画框图）。原因：person 审核工具的队列来源是
+「train 段中尚未确认 person 标签的图」，lc13 线每写一批新图，person 队列就会自动纳入这些新图。
+**这不是遗漏，而是两线共库的必然结果**——结论：**person 补标队列不会真正「清空」，只要 lc13 线继续往 train 写图**。
+
+**person 补标线累计（B+35~45，共 10 批）**：各批净增 person 框依次为
+p0_l -2 / p0_m +7 / p0_n +30 / p0_o +110 / p0_p +117 / p0_q +74 / p0_r +84 / p0_s +61 / p0_t +34 / p0_u +23 = **本线贡献 person 框净 +538**；
+落库图累计 **约 616 图**（每批 60 图 ×9 + 最后一批 56）。场景红线整图剔除累计 **10 张**（p0_k 3 + p0_n 6 + p0_p 1）。
+（注：train 段 person 总数同期 1,376 → 2,200 的增幅还包含 lc13 线画框图自带的 person 标注，**不能**与本线 +538 直接相抵。）
+
+**后续建议**：
+1. person 补标主体工作**已收口**；剩余 `lc13_*` 新图的 person 复核可作为**常态化尾随任务**，随 lc13 线批次滚动处理即可，无需当作独立大批次。
+2. 若 lc13 线继续大规模写 train，建议在 person 审核工具中**默认排除 `lc13_*`**（或单独标记「lc13 图 person 复核」子队列），避免两线队列互相干扰。
+`EXCLUDE_MANUAL` 本批无新增（无剔除图）。
