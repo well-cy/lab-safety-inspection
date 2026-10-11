@@ -1496,3 +1496,38 @@ done 清单 **595 → 894**；源池剩余 **421 张**（train 约 286 / val 71 
 **质检备注**：本批高质量实验室/医疗实拍比例上升，goggles(35)/mask(8) 明显增多，
 P7QRUE1S3DC3/SLXRD2M32X7W/H9G30BLJXKGP 等大群体密集图逐件分开标注，质量好；
 4 类（goggles）标注显著增加是 E3 跨域问题的对症改善。
+
+---
+
+### B+52. lc13l 收官批落库（50 张 → valid +38 / 剔除 11 / 悬留 1，2026-10-11 傍晚，负责人：许婧雯）
+
+**images.cv 白大褂源池（944 张）至此全部处理完毕** —— done 清单 **894 → 943**，
+唯一未处理的是悬留图 `ZSMH2IW3X5Z8`。
+**落库**：**valid +38 图 / +151 框（person 79 / lab_coat 65 / goggles 6 / gloves 1）**；
+剔除 11（全 val 段）→ `data/_rejected/lc13l_reject_20261011/`。
+`VA056PO2PB6W`/`M1F2698SF8NM` 导出格式异常（!REJECT 后带框行），按剔除优先正确处理 ✅。
+
+**悬留图确认**：`ZSMH2IW3X5Z8`（空实验室场景，白大褂挂在椅背上、无人）连续两批未被标也未剔除。
+看图判断：实为有效难度样本（挂着的白大褂可标 lab_coat 无 person），但不宜为一图拖队列 →
+继续扣下，图留源池 `train/lab_coat/ZSMH2IW3X5Z8.jpg`，待用户拍板：补标 / 剔除 / 或留作负样本。
+全库校验 **10,936 框（train 8,419 / valid 1,666 / test 851），0 坏行 / 0 孤儿** ✅。
+复核拼图：`outputs/labcoat_label_review_lc13l/_review_kept_38.jpg` / `_review_rejected_11.jpg`。
+
+---
+
+## 🏁 lc13 系最终统计（B+38~52，12 批画框全部落库）
+
+| 指标 | 数值 |
+|---|---|
+| 源池 | images.cv 白大褂 944 张（自动筛查 clean） |
+| 人工画框入库 | **+642 图 / +2,576 框** |
+| 框类别 | lab_coat +1,034 / person +1,240 / gloves +112 / goggles +86 / mask +15（近似） |
+| 整图剔除 | 300 张（32%） |
+| 悬留 | 1（ZSMH2IW3X5Z8 空实验室） |
+| 本线带来全库规模 | **10,936 框**（train 8,419 / valid 1,666 / test 851） |
+
+**后续动作清单**：
+1. `ZSMH2IW3X5Z8` 悬留图拍板（补标/剔除/负样本）
+2. route A 口径回补：lc13i 的 `HYXBKF2PA0HW`、`KIF16IEVN1QV` 连体服补 lab_coat
+3. 全量标完 → 跑 E3 复测验证 lab_coat 跨域改善（上次 F1 0.34→0.891）
+4. 向组长索取 `best.pt` 做预标注，支撑下一数据源（E5 P0' 手套/护目镜补数据）
