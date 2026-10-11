@@ -1079,3 +1079,50 @@ done 清单 **875 → 935**；全库校验 **0 坏行 / 0 孤儿图 / 0 孤儿�
 
 **队列状态与下一批**：done 935，剩余 211（P0 164 / P1 47），继续生成 **p0_q**。
 `EXCLUDE_MANUAL` 待评估：剔除图 `istockphoto-810129952-...-0015`（非 cppe5 编号，走 workfile 排除逻辑，非 EXCLUDE_MANUAL）。
+
+---
+
+### B+39. lc13b 第二批画框落库（60 张 → test +31 / 剔除 29，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 图全覆盖**（31 带框 / 29 剔除），0 漏标（每张保留图都有 lab_coat 框）、0 框行冲突。
+
+**落库**：**test +31 图 / +108 框（lab_coat 49 / person 52 / goggles 6 / gloves 1）**；
+剔除 29 张（含 193WAVBL1GB6——她复核后判定为图库摆拍，直接剔除，B+38 的待补项就此关闭）
+→ `data/_rejected/lc13b_reject_20261011/`。
+备份 `data/lab_ppe/_label_backup/labels_labcoat_lc13_20261011_132957.tar.gz`。
+全库校验 **8,300 框，0 坏行 / 0 孤儿图 / 0 孤儿标签** ✅。源池剩余 **884 张**。
+
+**lc13 系累计（B+38+B+39）**：test **+59 图 / +216 框（lab_coat +90）**，剔除 60 张。
+
+**下一步**：`lc13c`（队列继续，全 val/test 段将陆续过渡到 train 段 662 张主战场）。
+
+### B+41. person 补标第十七批落库（p0_q，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_q/`，index 共 60 图（37 张出现在她的导出中 + 23 张未改动按「库内框 + 候选」直接采纳）。
+本批 **无整图剔除**，构成为 `w-*` 系列（w-2/w-3/w-5/w-8/w-13/w-22…w-62，多为 lab_coat + goggles 半身像）
+与 `web_00xx` 系列（web_0032/0038/0040/0055/0057/0058/0071/0075 等小尺寸网络图）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_q/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_q/labels \
+  --batch-index outputs/person_review_p0_q/index.txt \
+  --reject-tag p0q_reject_20261011
+```
+
+**净增量（备份差分实测，相对 B+40 底座）**：person **+74** / mask **-1** / gloves **-1** / lab_coat **+2** / goggles **0** = **+74**。
+（`--keep-classes 3` 防误删保留 11 个 lab_coat 框。）
+
+**执行后底座**：**train 1,221 图 / 6,318 框（person 1,743 / mask 858 / gloves 1,840 / lab_coat 1,110 / goggles 767）**；
+valid 262/1,256 不变。
+⚠️ test 已由并行 lc13 线继续扩至 **791 图 / 800 框**（较 B+40 又增 31 图，非 person 线动作）。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_133529.tar.gz`（1,221 文件，落库前 = B+40 底座）。
+done 清单 **935 → 995**；train 全库校验 **0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 干跑幂等（60 图、剔除 0 张、底座数字不变）✅。
+
+**队列状态与下一批**：done 995，剩余 151（P0 104 / P1 47），继续生成 **p0_r**——person 补标队列预计 3 批内清空。
+`EXCLUDE_MANUAL` 本批无新增（无剔除图）。
