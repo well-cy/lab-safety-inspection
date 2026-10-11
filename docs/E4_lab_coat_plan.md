@@ -1403,3 +1403,25 @@ train 段进度：**232/662（约 35%）**；val 段 135 张未动。
 **质检备注**：保留图中含若干边缘样本——骷髅穿白大褂（DYRNJEQ9C7QF）、蓝发人偶（DMFYCQIJMIWS）、
 户外航拍远景（C3TC3WHRMX5K）、番茄手持特写（CHZ4M336DN5F）等，框几何正确，留作难度样本；
 若 E3 复测 lab_coat 误检上升，可优先对本类边缘子集降采样。
+
+---
+
+### B+48. lc13h 第八批画框落库（60 张 → train +44 / 剔除 15 / 待定 1，2026-10-11 下午，负责人：许婧雯）
+
+**导出 60 全覆盖**（45 保留 / 15 剔除），0 坏行 / 0 越界。
+1 处剔除+框冲突（GFHUX0IU3Z3E：`!REJECT` 后跟 3 个 lab_coat 框）→ 按剔除优先，框丢弃。
+**⚠️ `BU4ZPSTGQ7ST` 连续两批未标 lab_coat**（真实实验室白大褂+蓝手套研究员，本批只标
+gloves×2 + person；上批同样漏）→ 再次 `--skip-stems` 扣下，**待用户明确意图**：
+若判为 coverall/不收 → 整图剔除；若应收 → 补 1 个 lab_coat 框。图留源池，done 未登记。
+**落库**：**train +44 图 / +185 框（person 97 / lab_coat 69 / gloves 16 / goggles 5 / mask 1）**；
+剔除 15 → `data/_rejected/lc13h_reject_20261011/`。
+全库校验 **9,524 框（train 7,417 / valid 1,256 / test 851），0 坏行 / 0 孤儿** ✅
+（落库脚本重跑幂等：第二次执行剔除源图缺失但不影响已入库数据）。
+done 清单 **417 → 476**；源池剩余 **753 张**（train 543 / val 135 / test 75）。
+
+**lc13 系累计（B+38~48）**：**+285 图 / +1,164 框（lab_coat +465 / person +552）**，剔除 190 张。
+train 段进度：**276/662（约 42%）**；val 段 135 张未动。
+复核拼图：`outputs/labcoat_label_review_lc13h/_review_kept_45.jpg` / `_review_rejected_15.jpg`。
+
+**质检备注**：本批影棚/图库摆拍占比回升（工作证照、圣诞帽摆拍、婚礼白礼服边缘样本等），
+亦有 FFYHC2LMWGUZ 集市人群（16 person 逐个标）等高密度样本，框几何正确。
