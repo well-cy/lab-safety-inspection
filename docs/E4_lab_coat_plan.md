@@ -648,3 +648,20 @@ B+25 落库后复核场景红线，`lcsi_-2024-05-20-` 视频族实为图库/商
 
 **执行后底座（B+26 后）**：**train 1,240 图 / 6,076 框（person 1,416 / mask 924 / gloves 1,883 / lab_coat 1,103 / goggles 750）**；
 valid 262/1,256、test 732/584 不变；全库 **2,234 图 / 7,916 框**。p0_h 批次不含该族帧，不受影响。
+
+### B+27. person 补标第八批落库（p0_h）+ 剔除 cppe5_153（2026-10-11 上午，负责人：许婧雯）
+
+她 11:15 贴回 p0_h 导出（45 图有改动），口径同前，并点名**剔除批次最后一张 `cppe5_153_a1394779`**。
+
+- 60 图 = 导出 45 + 未改动采纳 15；**person +30**（1,416→1,446）、mask +2、gloves +23、goggles +10、lab_coat 0；
+- **亮点：lcsi_KakaoTalk 族 9 图主动补标 goggles ×9 / gloves ×18**（编辑器 1–5 键切类手画）——该族原只有 lab_coat，
+  属于"标注补全"；cppe5 若干图亦补 mask/gloves/goggles。导出与库内逐类 diff **无非 person 误删**，未启用 `--keep-classes`；
+- **剔除 cppe5_153_a1394779**（她点名）：火葬场混乱人群场景，person 框大面积互相重叠、gloves/mask 框乱贴，
+  且不符合「实验室/科研/医疗操作」场景红线 → 图+标签移入 `data/_rejected/cppe5_review_20261011/`（只移不删），
+  -11 person / -6 mask / -5 gloves；import_manifest_cppe5.csv 中该行编号 153 作废；
+- 落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_111759.tar.gz`（1,240 文件）；
+- done 清单 395 → **455 图**；队列 751 → **691**。
+
+**执行后底座（B+27 落地）**：**train 1,239 图 / 6,118 框（person 1,434 / mask 920 / gloves 1,901 / lab_coat 1,103 / goggles 760）**；
+valid 262/1,256、test 732/584 不变。全库 **2,233 图 / 7,958 框**（person 1,593 / mask 1,163 / gloves 2,494 /
+lab_coat 1,421 / goggles 1,287），0 坏行、0 孤儿。
