@@ -1046,3 +1046,36 @@ done 清单 **815 → 875**；train 全库校验 0 坏行 / 0 孤儿。
 
 **队列状态与下一批**：done 875，剩余 271（P0 224 / P1 47），继续生成 **p0_p**。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+### B+40. person 补标第十六批落库（p0_o 之后 · p0_p，2026-10-11 下午，负责人：许婧雯）
+
+**批次构成**：`outputs/person_review_p0_p/`，index 共 60 图（17 张出现在她的导出中 + 42 张未改动按「库内框 + 候选」直接采纳，另 1 张整图剔除）。
+本批以 **istockphoto 视频抽帧**为主（2169298710 / 472933717 / 619165530 / 809879018 / 809904308 / 809958214 / 810129952 等
+多组连续帧，医护穿脱 PPE），另含 3 张单类补标图（`k2` / `k3` / `w-11-`）。
+
+**落库命令**：
+
+```bash
+.venv/Scripts/python.exe tools/apply_person_review.py \
+  --export outputs/person_review_p0_p/_her_export.txt \
+  --keep-classes 3 \
+  --accept-from-ws data/_prelabel/person_p0_p/labels \
+  --batch-index outputs/person_review_p0_p/index.txt \
+  --reject-tag p0p_reject_20261011
+```
+
+**整图剔除（1 张）**：`istockphoto-810129952-640_adpp_is_mp4-0015`（该帧只剩局部手臂/半身，lab_coat 与 mask 均无法标稳）。
+剔除图已移入 `data/_rejected/p0p_reject_20261011/`。
+
+**净增量（备份差分实测，相对 B+39 底座）**：person **+125** / mask **-6** / gloves **-5** / lab_coat **+4** / goggles **-1** = **+117**。
+（`--keep-classes 3` 防误删保留 5 个 lab_coat 框。）
+
+**执行后底座**：**train 1,221 图 / 6,244 框（person 1,669 / mask 859 / gloves 1,841 / lab_coat 1,108 / goggles 767）**；
+valid 262/1,256 不变；test 760/692（含并行会话 lc13 写入的 28 张，见 B+39）。
+备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_131929.tar.gz`（1,222 文件，落库前 = B+39 底座）。
+done 清单 **875 → 935**；全库校验 **0 坏行 / 0 孤儿图 / 0 孤儿标签**。
+
+**验证**：按 index 干跑幂等（59 图、剔除 1 张、底座数字不变）✅。
+
+**队列状态与下一批**：done 935，剩余 211（P0 164 / P1 47），继续生成 **p0_q**。
+`EXCLUDE_MANUAL` 待评估：剔除图 `istockphoto-810129952-...-0015`（非 cppe5 编号，走 workfile 排除逻辑，非 EXCLUDE_MANUAL）。
