@@ -159,7 +159,7 @@ def model_info():
     det = p.detector
     return {
         "model_file": Path(det.weights_path).name,
-        "base": ("Lab-PPE 4类自制模型 (E4 dataset, ultralytics)"
+        "base": ("Lab-PPE 自制模型 (ultralytics)"
                  if Path(det.weights_path).name == "labppe_v8s.pt"
                  else "SH17 dataset (official YOLOv8s weights, ultralytics)"),
         "device": det.device_name,

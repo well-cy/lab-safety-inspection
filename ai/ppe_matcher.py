@@ -12,7 +12,7 @@
 """
 from dataclasses import dataclass, field
 
-from ai.detector import Detection, CLASS_CN
+from ai.detector import Detection, CLASS_CN, _iou
 
 
 @dataclass
@@ -48,13 +48,29 @@ def _diag(box: Detection) -> float:
     return ((box.x2 - box.x1) ** 2 + (box.y2 - box.y1) ** 2) ** 0.5
 
 
+def _dedup_persons(persons: list[Detection], iou_thr: float = 0.5) -> list[Detection]:
+    """合并重复 person 框（保留置信度最高者）。
+
+    背景：5 类化后自制模型自带 person 类，后端同时挂 COCO 人员锚点，
+    同一人会产生两个高度重叠的 person 框，若不去重会被当成两个人
+    （其中一人无 PPE → 误报违规）。此处按 IoU 去重。
+    """
+    if len(persons) <= 1:
+        return list(persons)
+    kept: list[Detection] = []
+    for p in sorted(persons, key=lambda d: d.conf, reverse=True):
+        if all(_iou(p, k) < iou_thr for k in kept):
+            kept.append(p)
+    return kept
+
+
 def match_person_ppe(detections: list[Detection],
                      max_dist_ratio: float = 0.5) -> list[PersonState]:
     """
     输入：一帧内的全部 Detection（含 person 与各类 PPE）
     输出：PersonState 列表（每人绑定了属于自己的 PPE）
     """
-    persons = [d for d in detections if d.cls_name == "person"]
+    persons = _dedup_persons([d for d in detections if d.cls_name == "person"])
     ppes = [d for d in detections if d.cls_name != "person"]
 
     states = [PersonState(person_id=i + 1, bbox=p) for i, p in enumerate(persons)]
