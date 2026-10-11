@@ -901,3 +901,40 @@ done 清单 **695 → 755**；全库校验 **7,827 框，0 坏行 / 0 孤儿图 
 
 **队列状态与下一批**：done 755，现存残留未审核图按 `data/_person_review_done.txt` 实时口径继续生成 **p0_n**。
 `EXCLUDE_MANUAL` 本批无新增（无剔除图）。
+
+---
+
+### B+37. lab_coat 人工画框工具链搭建（lc13 批，2026-10-11 下午，负责人：许婧雯）
+
+**背景**：B+34 剔除 355 张后，`data/raw/labcoat_imagenetcv/data/{train,val,test}/lab_coat/`
+剩 **944 张**（train 662 / val 135 / test 147）通过自动筛查。经她确认（「不用管场景」），
+944 张全部采纳为候选。但这批是 **images.cv 分类图**，**无任何 bbox**，不能直接混训 ——
+必须先人工画 `lab_coat` 框。
+
+**新增工具（2 个）**：
+
+1. `tools/make_labcoat_label_review.py` —— 批次生成端（复用 `make_box_editor.HTML` 编辑器）
+   - 读 `outputs/labcoat_imagenetcv_screen/clean.txt` → 按 `--split` / `--limit` / `--start` 切片
+   - 从 raw 池生成编辑器工作区 `outputs/labcoat_label_review_<tag>/editor.html`
+   - 产出 `_stem2rel.tsv`（stem → raw 相对路径）供落库端定位原图
+   - `--done-file data/_labcoat_label_done.txt` 自动跳过已完成图（防批次回退）
+   - 超长边（>1600）生成缩图的坐标仍按原图归一化，标签精度不受影响
+
+2. `tools/apply_labcoat_label.py` —— 落库端
+   - 读编辑器导出（`### stem` + 5 列 `cls cx cy w h`），**整图覆盖**工作区标签
+   - `!REJECT` 图不写标签，原图**移动**到 `data/_rejected/<tag>/`（只移不删铁律）
+   - 正常图：`lc13_` 前缀**复制**原图到 `data/lab_ppe/images/<split>/`，
+     标签直写 `data/lab_ppe/labels/<split>/lc13_<stem>.txt`（类别 **3=lab_coat**）
+   - split 映射：raw `train→train` / `val→valid` / `test→test`（与库内口径一致）
+   - 写前自动 tar 备份 `labels/`；`--dry` 干跑；坐标/类别异常拦截
+   - 校验：只允许 lab_coat(3)，坐标须落 `[0,1]`
+
+**首批工作区**：`outputs/labcoat_label_review_lc13a/editor.html`（60 张，队列位置 0~59）。
+编辑器类别固定用法：**按 4 键切到 lab_coat**（或直接拖拽，默认 cls 也是 4 需手动选），
+一张图多件白大褂 → 画多个框；无白大褂/非实验场景 → **X 键整图剔除**。
+
+**验证**：`parse_export` 单测（多框 + `!REJECT` 解析）✅；
+干跑落库链路（3 图合成：2 入 test、1 剔除）split 路由/框计数/剔除去向均正确 ✅。
+
+**队列状态**：944 张待标注，建议 **60 张/批**，首批 `lc13a` 已生成。标注完成后按既有口径
+落库（`lc13_` 前缀、三向审计、落库前 tar 备份、E4 记 B+NN）。
