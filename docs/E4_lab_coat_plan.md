@@ -693,3 +693,18 @@ lab_coat 1,421 / goggles 1,287），0 坏行、0 孤儿。
 3. 已用一次性沙盒 split（`_smoketest`，测试后即清理）跑通：图+标签移动、工作区清理、未剔除图正常落库、
    全库校验 0 坏行 / 0 孤儿；编辑器内嵌 JS 通过 `node --check`。
 4. `docs/E4_lab_coat_plan.md` 与技能文档同步更新；**p0_i 批次编辑器已重生成**，可直接用新功能。
+
+### B+28. person 补标第九批落库（p0_i，2026-10-11 中午，负责人：许婧雯）
+
+她 11:34 贴回 p0_i 导出（37 图有改动，**首次使用新版编辑器**，无 `!REJECT` 标记 = 本批零整图剔除）。
+
+- 60 图 = 导出 37 + 未改动采纳 23；**净增 27 框：person +16 / mask +4 / gloves +5 / goggles +1 / lab_coat +1**；
+- 非 person 删除仅 2 框、集中在 `cppe5_161_e93014b4`（mask+goggles）：画框核实该图是**全面罩/面罩式防护**，
+  按「面罩不收」口径删除合理；同图她另把 person 框重画到头部面罩整体；
+- 其余改动以 **person 补框/挪框**为主（自动候选框人工修正确认），另补 mask ×5 / gloves ×5 / goggles ×2 / lab_coat ×1；
+- 落库前备份 `data/lab_ppe/_label_backup/labels_train_person_20261011_113602.tar.gz`（1,239 文件）；
+- done 清单 455 → **515 图**；队列 691 → **631**（P0 584 / P1 47）；下一批 p0_j 已生成。
+
+**执行后底座（B+28 落地）**：**train 1,239 图 / 6,145 框（person 1,450 / mask 924 / gloves 1,906 / lab_coat 1,104 / goggles 761）**；
+valid 262/1,256、test 732/584 不变。全库 **2,233 图 / 7,985 框**（person 1,609 / mask 1,167 / gloves 2,499 /
+lab_coat 1,422 / goggles 1,288），0 坏行、0 孤儿。
