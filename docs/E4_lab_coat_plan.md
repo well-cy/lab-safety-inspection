@@ -768,3 +768,26 @@ done 清单 515 → **575 图**（含剔除图）。
 valid 262/1,256、test 732/584 不变；全库 **2,225 图 / 7,888 框**（person 1,572 / mask 1,141 / gloves 2,462 /
 lab_coat 1,422 / goggles 1,291）。
 **遗留**：`tools/import_cppe5_batch.py` 的 `EXCLUDE_MANUAL` 需增补 {385,388,394,434,452,493}，保证重跑导入脚本不复活这 6 张。
+
+### B+32. labcoat_imagenetcv 1,299 张分类图解压 + 自动初筛（2026-10-11 下午，负责人：许婧雯）
+
+`e58z9vu3fcusg7wzjk91n.zip`（images.cv，lab_coat 单类**分类**集，无 bbox）解压至
+`data/raw/labcoat_imagenetcv/data/{train,val,test}/lab_coat/`（1,299 张，MD5 抽样 300 vs 库内命中 0，零重叠）。
+
+新增 `tools/screen_labcoat_imagenetcv.py`（复用 screen_dirty_graphics 判据 + 拼图网格 Hough 检测 +
+拉普拉斯模糊度 + 水印边带密度 + 尺寸下限），自动初筛：
+
+- **suspect 355 张（27.3%）**：黑白 118 / 过小 111 / 广告排版 92 / 白底平铺 57 / 拼图 49 / 糊图 18 / 文档 1；
+- **clean 944 张** —— 机器判不了"是否实验室场景"，需人工过拼版；
+- 产物在 `outputs/labcoat_imagenetcv_screen/`（suspect 8 版 + clean 20 版拼版、两档清单、逐图 TSV）。
+
+人工抽看拼版估计：clean 里真实实验室/医疗场景约 3–4 成，其余为影棚模特照/生活照（场景红线剔）。
+**预计最终可用 250–400 张**——超过 LVIS（46 框）一个量级，是 lab_coat 线最大的新增候选来源。
+详细分析与人审指引见 `docs/E8_labcoat_imagenetcv_筛查报告_20261011.md`。
+
+**底座不变（B+32 无数据变更，仅 raw 层解压+初筛；底座数字取 B+31 p0_j 落库后实测）**：
+train 1,231 图 / 6,048 框（person 1,413 / mask 898 / gloves 1,869 / lab_coat 1,104 / goggles 764）；
+valid 262/1,256、test 732/584；全库 **2,225 图 / 7,888 框**。done 清单 575；下一批 p0_k 未生成
+（队列剩余按并行会话 p0_j 落库后口径，生成时以 `data/_person_review_done.txt` 实时为准）。
+待办：① 她过 `_clean_p01–20.jpg` 判场景红线；② 按批生成 lab_coat 画框工具（复用审核编辑器）；
+③ 向组长索 `best.pt` 做预标注。

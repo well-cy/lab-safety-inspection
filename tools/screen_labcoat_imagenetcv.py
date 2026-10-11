@@ -88,6 +88,26 @@ def blur_score(img) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+def studio_score(img) -> float:
+    """影棚/商品模特照判别：四周背景均匀度。
+
+    影棚照（电商模特图、白/蓝底形象照）边框区域颜色高度均匀（低方差），
+    真实场景（实验室/病房/展会）背景必有杂物 → 边框方差高。
+    返回 0~1，越高越像影棚照。
+    """
+    h, w = img.shape[:2]
+    small = cv2.resize(img, (256, int(256 * h / max(w, 1))), interpolation=cv2.INTER_AREA)
+    H, W = small.shape[:2]
+    band = max(4, int(H * 0.10))
+    border = np.concatenate([
+        small[:band].reshape(-1, 3), small[-band:].reshape(-1, 3),
+        small[:, :band].reshape(-1, 3), small[:, -band:].reshape(-1, 3)
+    ]).astype(np.float32)
+    # 亮度通道的方差（对白平衡/背景色稳健）
+    lum = border.mean(axis=1)
+    return float(np.exp(-lum.std() / 12.0))   # std≈0 → 1.0；std>30 → ≈0
+
+
 def judge(img, path: Path) -> dict:
     h, w = img.shape[:2]
     st = image_stats(img)
@@ -114,7 +134,6 @@ def judge(img, path: Path) -> dict:
         flags.append("too_small")
     if w * h > 4_000_000:
         flags.append("huge_res")              # 分辨率异常高（多为原图下载，非问题，仅记录）
-
     return dict(w=w, h=h, bright=round(ex["bright"], 4), colorf=round(ex["colorf"], 3),
                 white=round(st["white"], 4), dom=round(st["dom"], 4),
                 flat=round(st["flat"], 4), edge=round(st["edge"], 4),
@@ -175,16 +194,25 @@ def main() -> int:
                    encoding="utf-8")
     print(f"[可疑清单] {lst}")
 
-    clean = [r[0] for r in rows if r[13] in ("ok", "huge_res")]
+    # 两档产出：
+    #   suspect —— 任何硬 flags（商品图/拼图/糊图/黑白/过小/文档），基本可直接剔（仍出拼版供抽查）
+    #   clean   —— 无硬 flags，但"是否实验室场景"机器判不了，需人工过拼版定夺
+    HARD = {"ecom_flatlay", "ad_graphic", "blank_doc", "collage_grid",
+            "grayscale_like", "blurry", "too_small", "unreadable"}
+    suspect, clean = [], []
+    for r in rows:
+        (suspect if set(r[13].split("|")) & HARD else clean).append(r[0])
+    suspect, clean = sorted(suspect), sorted(clean)
+    print(f"\n  两档：suspect(硬伤) {len(suspect)} / clean(待人工判场景) {len(clean)}")
     cl = OUT / "clean.txt"
     cl.write_text("# labcoat_imagenetcv 自动筛查通过（无 flags，建议进入人工细看/标注候选）\n" +
-                  "\n".join(f"{i+1}\t{n}" for i, n in enumerate(sorted(clean))) + "\n",
+                  "\n".join(f"{i+1}\t{n}" for i, n in enumerate(clean)) + "\n",
                   encoding="utf-8")
     print(f"[通过清单 {len(clean)} 张] {cl}")
 
     if args.sheets:
-        make_sheets(allf, OUT, args.per_sheet, "suspect")
-        make_sheets(sorted(clean), OUT, args.per_sheet, "clean")
+        make_sheets(suspect, OUT, args.per_sheet, "suspect")
+        make_sheets(clean, OUT, args.per_sheet, "clean")
     return 0
 
 
