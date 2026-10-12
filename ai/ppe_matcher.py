@@ -68,21 +68,71 @@ def _near_duplicate(a: Detection, b: Detection,
     return smaller > 0 and inter / smaller >= contain_thr
 
 
-def _dedup_persons(persons: list[Detection]) -> list[Detection]:
-    """合并「同一人」的近重复 person 框（保留置信度最高者）。
+def _is_fragment(p: Detection, others: list[Detection]) -> bool:
+    """碎片框判定：person 框只是某人的一小部分（手臂/头部误检）。
 
-    背景：YOLO/NMS 在密集人群可能对同一人输出两个几乎相同的框，
-    若不去重会被当成两个人（其中一人无 PPE → 误报违规）。
-    判定标准必须从严（近重复才合并）：真实拥挤场景中两人框
-    IoU 达 0.5+ 很常见，宽松阈值会把真人合并掉。
+    判据①：中心点落在另一个面积 ≥2 倍的 person 框内。
+    判据②：面积不足同帧最大 person 框的 3%（极远小人/碎片，
+    正常画面里人与人的线性尺寸差极少达 5.8 倍以上）。
+    真实拥挤场景两人虽重叠，面积比很少达 2 倍（拥抱实测 1.7 倍）。
+    """
+    if not others:
+        return False
+    for o in others:
+        if o.area >= 2.0 * p.area and _center_in_box(p.center[0], p.center[1], o):
+            return True
+    largest = max(o.area for o in others)
+    return p.area < 0.03 * largest
+
+
+def _is_union_box(p: Detection, others: list[Detection]) -> bool:
+    """联合框判定：一个框"套住"了 >=2 个更高置信度的真人框（YOLO 密集人群产物）。
+
+    判据：>=2 个 conf 比 p 高 0.1+ 的 person 框与 p 的交集合计覆盖 p 面积 50%+。
+    真人框不会被多个更高置信度框大面积覆盖（那样 NMS/真值都会偏向保留大框）。
+    """
+    covered = 0.0
+    count = 0
+    for o in others:
+        if o.conf < p.conf + 0.1:
+            continue
+        iw = min(p.x2, o.x2) - max(p.x1, o.x1)
+        ih = min(p.y2, o.y2) - max(p.y1, o.y1)
+        inter = max(0.0, iw) * max(0.0, ih)
+        if inter > 0:
+            covered += inter
+            count += 1
+    return count >= 2 and p.area > 0 and covered >= 0.5 * p.area
+
+
+def _dedup_persons(persons: list[Detection]) -> list[Detection]:
+    """person 框清理：近重复合并 + 碎片框/联合框剔除（保留置信度最高者）。
+
+    背景：YOLO 在密集人群会输出三类伪 person 框——
+    ① 同一人近重复框（NMS 漏抑）② 肢体/头部碎片框 ③ 套住多人的联合框。
+    伪框不清理会把真人挤掉 PPE 归属或凭空多出"NO PPE"幻影人员。
+    判定从严迭代删除：删掉一个后其余框的关系可能变化，故循环直到稳定。
     """
     if len(persons) <= 1:
         return list(persons)
-    kept: list[Detection] = []
-    for p in sorted(persons, key=lambda d: d.conf, reverse=True):
-        if not any(_near_duplicate(p, k) for k in kept):
-            kept.append(p)
-    return kept
+    kept = sorted(persons, key=lambda d: d.conf, reverse=True)
+    changed = True
+    while changed and len(kept) > 1:
+        changed = False
+        result: list[Detection] = []
+        for i, p in enumerate(kept):
+            higher = kept[:i]  # 置信度更高的已保留框
+            if _is_fragment(p, higher) or _is_union_box(p, higher):
+                changed = True
+                continue
+            result.append(p)
+        kept = result
+    # 最后做近重复合并（保留 conf 最高者）
+    out: list[Detection] = []
+    for p in kept:
+        if not any(_near_duplicate(p, k) for k in out):
+            out.append(p)
+    return out
 
 
 def match_person_ppe(detections: list[Detection],
