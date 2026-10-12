@@ -85,8 +85,15 @@ class Config:
         self.ROOT = root
 
         # ---------- 路径 ----------
-        self.MODEL_PATH = _env_path(
-            "MODEL_PATH", root / "ai" / "model" / "sh17_yolov8s.pt")
+        # 默认模型：优先使用自训 5 类 Lab-PPE 模型（person/mask/gloves/lab_coat/goggles），
+        # 该模型不存在时回退 SH17 官方权重（17 类，经 CLASS_ALIAS 映射到系统类别）。
+        # 仍可用 LABSAFETY_MODEL_PATH 环境变量强制指定任意权重。
+        # 说明：模型权重不入 git 仓库（见 .gitignore / DEVELOPMENT_GUIDE），
+        #      新成员克隆后若两个权重都没有，启动时会给出 503 + 下载提示。
+        _labppe = root / "ai" / "model" / "labppe_v8s.pt"
+        _default_model = _labppe if _labppe.exists() else (
+            root / "ai" / "model" / "sh17_yolov8s.pt")
+        self.MODEL_PATH = _env_path("MODEL_PATH", _default_model)
         self.DB_PATH = _env_path(
             "DB_PATH", root / "backend" / "labsafety.db")
         self.STATIC_DIR = _env_path(
@@ -141,6 +148,11 @@ class Config:
         # 可作为区域 PPE 要求的业务类别；person 是检测主体，不是 PPE。
         # 该列表与 ai/detector.py 的 SYSTEM_CLASSES 对齐，属契约内容，
         # 如需变更请走契约评审，不要用环境变量绕过。
+        #
+        # 注意：coverall（连体防护服）**故意不列入**。
+        # 按 E5.7 口径（Route B'），连体防护服不满足 lab_coat 要求，
+        # 它是「未穿实验服」这一违规的**证据类别**，而非区域可配置的必备 PPE。
+        # 它出现在检测结果里，但不作为 required_ppe 的可选值。
         self.ALLOWED_PPE = ["mask", "gloves", "lab_coat", "goggles", "helmet"]
 
     def ensure_dirs(self) -> None:

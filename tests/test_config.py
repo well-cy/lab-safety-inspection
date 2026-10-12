@@ -78,8 +78,12 @@ def main():
 
     # ---------- 1. 默认值必须与原硬编码一致 ----------
     print("--- 1. 默认值与原硬编码一致性（收口不得改变行为）---")
+    # MODEL_PATH 单独处理：5 类自训模型存在时优先，否则回退 SH17 官方权重
+    _m = str(config.MODEL_PATH)
+    _ok_model = (_m.endswith("sh17_yolov8s.pt")
+                 or _m.endswith("labppe_v8s.pt"))
+    report("MODEL_PATH 默认值（自制5类优先，回退 SH17）", _ok_model, f"实际={_m}")
     expectations = [
-        ("MODEL_PATH", "ai/model/sh17_yolov8s.pt"),
         ("DB_PATH", "backend/labsafety.db"),
         ("UPLOAD_DIR", "data/test/uploads"),
         ("ANNOTATED_DIR", "outputs/annotated"),
@@ -140,8 +144,10 @@ def main():
     # ---------- 3. 边界与非法输入 ----------
     print("--- 3. 边界与非法输入 ---")
     c = build_config(DEVICE="", MODEL_PATH="")
+    _mp = str(c.MODEL_PATH)
     report("空字符串视为未设置（回退默认值）",
-           c.DEVICE == "auto" and str(c.MODEL_PATH).endswith("sh17_yolov8s.pt"),
+           c.DEVICE == "auto" and (_mp.endswith("sh17_yolov8s.pt")
+                                   or _mp.endswith("labppe_v8s.pt")),
            f"DEVICE={c.DEVICE} MODEL_PATH={c.MODEL_PATH}")
 
     c = build_config(DEVICE="  cpu  ", CONF_THRESHOLD=" 0.5 ")

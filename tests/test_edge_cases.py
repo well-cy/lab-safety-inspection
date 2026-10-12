@@ -196,6 +196,141 @@ def main():
                        f"（提示：上报 inferred_frames 便于用户发现 stride 不合理）")
                 if body.get("record_id"):
                     created_records.append(body["record_id"])
+        # ============ BUG-9：跨类 NMS 抑制穿白大褂的人 ============
+        # 历史 bug：_nms_merge 用单一 merged 列表做**跨类**比较，person 框
+        # 会因与 lab_coat 框 IoU>0.55 而被丢弃（且 set 迭代顺序随机 →
+        # 每次重启表现不同）。用户可见症状：「不管多少人都只显示一个人」。
+        print("--- BUG-9 _nms_merge 必须按类独立 ---")
+        from ai.detector import Detection, PPEDetector
+
+        person_box = Detection(cls_name="person", raw_cls="person", conf=0.8,
+                               x1=100, y1=100, x2=300, y2=600)
+        coat_box = Detection(cls_name="lab_coat", raw_cls="lab_coat", conf=0.7,
+                             x1=100, y1=100, x2=300, y2=580)  # 与 person IoU≈0.96
+        merged = PPEDetector._nms_merge([person_box, coat_box], iou_thr=0.55)
+        report("跨类 NMS 不再互相抑制（person + lab_coat 均保留）",
+               len(merged) == 2 and {d.cls_name for d in merged} == {"person", "lab_coat"},
+               f"输入 2 框（IoU≈0.96）→ 输出 {len(merged)} 框: {[d.cls_name for d in merged]}")
+
+        dup_person = Detection(cls_name="person", raw_cls="person", conf=0.5,
+                              x1=102, y1=102, x2=298, y2=598)   # 同类近重复
+        merged2 = PPEDetector._nms_merge([person_box, dup_person], iou_thr=0.55)
+        report("同类近重复框仍会被正确合并（保留高置信）",
+               len(merged2) == 1 and merged2[0].conf == 0.8,
+               f"2 个同类近重复 → {len(merged2)} 框，conf={merged2[0].conf if merged2 else None}")
+
+        # 端到端：t09 合影真实应检出 >=5 人（修复前被 lab_coat 吃到 4 人）
+        t09 = ROOT / "data" / "test" / "t09_lab_coat_ceremony.jpg"
+        if t09.exists():
+            from backend.main import get_image_pipeline
+            from video.processor import process_image
+            pipe = get_image_pipeline()
+            res = process_image(pipe, t09, db.load_areas(config.DEFAULT_LAB_ID))
+            n_person = len(res["person_states"])
+            report("t09 合影人数不再被白大褂框吃掉（>=5 人）",
+                   n_person >= 5, f"检出人数 = {n_person}（修复前为 4）")
+
+        # ============ BUG-10：倒影过滤器误杀「长在身上的真手套」 ============
+        # 历史 bug：_is_reflection 只看「手套在画面底部 25% + 正上方有 mask/goggles
+        # 同位重叠」就判台面倒影。弯腰伏案者（4K 竖构图）自己的手在画面底部、
+        # 正对自己上方的 mask，完美满足旧判据 → img_17c92cec 3 个 conf 0.71~0.87
+        # 的真手套被全部误杀，网页显示「未佩戴手套」。
+        print("--- BUG-10 _is_reflection 不得误杀手套（长在身上的手） ---")
+        from ai.detector import Detection, PPEDetector as _PPE2
+
+        # _is_reflection 只读类常量，用 __new__ 造个空实例即可（无需加载模型）
+        _refl = _PPE2.__new__(_PPE2)
+
+        def _mk(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # 场景 A（img_17c92cec 缩小复刻）：手套 71%+ 在 person 框内 + 上方同位 mask
+        scene_a = [
+            _mk("person", 0.86, 0, 0, 1000, 1000),
+            _mk("mask",   0.74, 300, 300, 500, 380),
+            _mk("gloves", 0.87, 300, 800, 460, 1000),   # y1=800 > 0.75*1000
+        ]
+        g = scene_a[2]
+        report("身体上的手套不判倒影（≥50% 在 person 框内）",
+               not _refl._is_reflection(g, scene_a, None, 1000),
+               "gloves 与上方 mask 同位重叠但在 person 框内 → 必须保留")
+
+        # 场景 B（真倒影）：手套浮在人身体框外的台面上
+        scene_b = [
+            _mk("person", 0.86, 0, 0, 600, 900),
+            _mk("mask",   0.74, 300, 300, 500, 380),
+            _mk("gloves", 0.66, 300, 950, 460, 990),    # 在 person 框(y2=900)之外
+        ]
+        g2 = scene_b[2]
+        report("台面倒影仍会被正确过滤（person 框外）",
+               _refl._is_reflection(g2, scene_b, None, 1000),
+               "gloves 在 person 框外且上方同位 mask → 判倒影剔除")
+
+        # ============ BUG-11：坐姿者 PPE 被重叠站立者小框整体抢走 ============
+        print("--- BUG-11 match_person_ppe 解剖学消歧（坐姿 vs 站立重叠） ---")
+        from ai.detector import Detection
+        from ai.ppe_matcher import match_person_ppe as _match
+
+        def _mk(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # img_d020e947 按比例缩小复刻：坐姿者大框（含椅子）+ 站立者小框
+        # 与坐姿者上半身重叠。坐姿者的 mask/gloves 中心同时落在两个框内。
+        p_seated = _mk("person", 0.83, 528, 115, 692, 500)   # 大框
+        p_stand  = _mk("person", 0.74, 633,  77, 750, 273)   # 小框，重叠
+        mask_s   = _mk("mask",   0.72, 623, 157, 650, 181)   # 中心(636,169) 坐姿者的
+        mask_t   = _mk("mask",   0.78, 676, 118, 713, 147)   # 中心(694,133) 站立者的
+        glove_s  = _mk("gloves", 0.83, 697, 243, 725, 263)   # 中心(710,253)
+
+        sts = _match([p_seated, p_stand, mask_s, mask_t, glove_s])
+        by_area = {s.bbox.area: s for s in sts}
+        big = by_area[max(by_area)]      # 坐姿者
+        small = by_area[min(by_area)]    # 站立者
+        report("坐姿者的口罩不被站立者抢走（mask 在其头部高度）",
+               "mask" in big.ppe,
+               "mask 中心在坐姿者框 rel_y=0.14（脸），站立者框 rel_y=0.47（肚子，不合理）")
+        report("站立者本人的 mask 保留（在其头部高度）",
+               "mask" in small.ppe,
+               "站立者自己的 mask 仍归站立者")
+        report("显微伸手的手套归坐姿者（站立者框底部不合理）",
+               "gloves" in big.ppe,
+               "gloves 中心在站立者框 rel_y=0.90（脚部，不合理）→ 归坐姿者扩张框")
+
+        # ============ BUG-12：底部手套被「鞋/脚误检」规则无差别误杀 ============
+        print("--- BUG-12 底部真手不被 0.86 规则误杀（长在身上守卫） ---")
+        import numpy as np
+        from ai.detector import PPEDetector as _PPE3
+        # 不加载模型的轻量实例（_filter_implausible 只依赖类级常量与方法）
+        _det3 = object.__new__(_PPE3)
+
+        def _mk2(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # img_89128025 复刻：主研究员的手在画面最底部（y1=0.88h），
+        # 与 person 框重叠 40% 面积 → 是手不是鞋
+        scene_c = [
+            _mk2("person", 0.62, 380,   7, 762, 423),
+            _mk2("gloves", 0.64, 303, 381, 453, 432),
+        ]
+        frame = np.zeros((432, 768, 3), dtype=np.uint8)
+        kept = _det3._filter_implausible(scene_c, frame)
+        report("画面底部但长在身上的手保留（与 person 重叠≥35%）",
+               any(d.cls_name == "gloves" for d in kept),
+               "特写构图手在画面底部 y1=0.88h，conf 0.637 不应被当鞋丢弃")
+
+        # 对照：底部手套与 person 框无实质重叠（真正的鞋/脚场景）
+        scene_d = [
+            _mk2("person", 0.62, 380,   7, 762, 300),   # person 框在手套上方结束
+            _mk2("gloves", 0.64, 303, 381, 453, 432),
+        ]
+        kept2 = _det3._filter_implausible(scene_d, frame)
+        report("与人体无重叠的底部手套仍被过滤（鞋/脚）",
+               not any(d.cls_name == "gloves" for d in kept2),
+               "person 框在手套上方结束 → 底部手套判鞋/脚剔除")
+
     finally:
         main_mod.task_manager = saved_tm
         conn = db.get_conn()

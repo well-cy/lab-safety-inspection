@@ -1,0 +1,53 @@
+# ==========================================================
+# 换行符与文本规范化
+# 背景：本仓库在 Windows 上 core.autocrlf=true，且无 .gitattributes，
+#       导致 git 内部文件（packed-refs 等）与脚本文件换行符不稳定，
+#       曾出现 broken ref 与反复 "LF will be replaced by CRLF" 警告。
+# 策略：文本文件统一在仓库内以 LF 存储（text=auto），
+#       Windows 检出时按需转换；二进制文件明确标记避免被改坏。
+# ==========================================================
+
+# 默认：由 git 自动判断文本文件，仓库内统一 LF
+* text=auto eol=lf
+
+# ---- 源码与脚本 ----
+*.py    text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+.gitignore       text eol=lf
+.gitattributes   text eol=lf
+
+# ---- Windows 批处理必须 CRLF，否则部分命令解析异常 ----
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# ---- 二进制：禁止任何换行符转换 ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.bmp   binary
+*.webp  binary
+*.gif   binary
+*.mp4   binary
+*.avi   binary
+*.mov   binary
+*.mkv   binary
+*.pt    binary
+*.pth   binary
+*.onnx  binary
+*.engine binary
+*.zip   binary
+*.xlsx  binary
+*.db    binary
+*.sqlite binary
+*.sqlite3 binary
+*.pdf   binary
