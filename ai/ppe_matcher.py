@@ -48,18 +48,39 @@ def _diag(box: Detection) -> float:
     return ((box.x2 - box.x1) ** 2 + (box.y2 - box.y1) ** 2) ** 0.5
 
 
-def _dedup_persons(persons: list[Detection], iou_thr: float = 0.5) -> list[Detection]:
-    """合并重复 person 框（保留置信度最高者）。
+def _near_duplicate(a: Detection, b: Detection,
+                    iou_thr: float = 0.85, contain_thr: float = 0.8) -> bool:
+    """判断两个 person 框是否为「同一人的重复框」。
 
-    背景：5 类化后自制模型自带 person 类，后端同时挂 COCO 人员锚点，
-    同一人会产生两个高度重叠的 person 框，若不去重会被当成两个人
-    （其中一人无 PPE → 误报违规）。此处按 IoU 去重。
+    必须同时满足：IoU 很高（>=0.85）且小框大部分被大框包含。
+    只用 IoU>=0.5 会误杀拥抱/并肩等真实重叠的两个人
+    （2026-10-11 网页实测：双人拥抱 IoU≈0.52 被误合并为 1 人）。
+    """
+    iou = _iou(a, b)
+    if iou < iou_thr:
+        return False
+    iw = min(a.x2, b.x2) - max(a.x1, b.x1)
+    ih = min(a.y2, b.y2) - max(a.y1, b.y1)
+    inter = max(0.0, iw) * max(0.0, ih)
+    area_a = (a.x2 - a.x1) * (a.y2 - a.y1)
+    area_b = (b.x2 - b.x1) * (b.y2 - b.y1)
+    smaller = min(area_a, area_b)
+    return smaller > 0 and inter / smaller >= contain_thr
+
+
+def _dedup_persons(persons: list[Detection]) -> list[Detection]:
+    """合并「同一人」的近重复 person 框（保留置信度最高者）。
+
+    背景：YOLO/NMS 在密集人群可能对同一人输出两个几乎相同的框，
+    若不去重会被当成两个人（其中一人无 PPE → 误报违规）。
+    判定标准必须从严（近重复才合并）：真实拥挤场景中两人框
+    IoU 达 0.5+ 很常见，宽松阈值会把真人合并掉。
     """
     if len(persons) <= 1:
         return list(persons)
     kept: list[Detection] = []
     for p in sorted(persons, key=lambda d: d.conf, reverse=True):
-        if all(_iou(p, k) < iou_thr for k in kept):
+        if not any(_near_duplicate(p, k) for k in kept):
             kept.append(p)
     return kept
 

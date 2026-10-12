@@ -224,6 +224,7 @@ class PPEDetector:
             results = self.model.predict(
                 frame, conf=conf or self.conf_threshold, device=self.device,
                 verbose=False, imgsz=sz,
+                iou=0.5,  # 收紧 NMS：默认 0.7 会保留"套住多人"的联合框
             )
             if not results:
                 continue
