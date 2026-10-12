@@ -68,23 +68,35 @@ def _near_duplicate(a: Detection, b: Detection,
     return smaller > 0 and inter / smaller >= contain_thr
 
 
-def _is_fragment(p: Detection, others: list[Detection]) -> bool:
+def _contains_ppe_center(p: Detection, ppes: list[Detection] | None) -> bool:
+    """person 框内含 mask/goggles/lab_coat 中心 → 强真人信号（脸部/躯干 PPE）。"""
+    if not ppes:
+        return False
+    for d in ppes:
+        if d.cls_name in ("mask", "goggles", "lab_coat") and \
+                _center_in_box(d.center[0], d.center[1], p):
+            return True
+    return False
+
+
+def _is_fragment(p: Detection, others: list[Detection],
+                 ppes: list[Detection] | None = None) -> bool:
     """碎片框判定：person 框只是某人的一小部分（手臂/头部误检）。
 
-    判据①：中心点落在另一个面积 ≥2 倍的 person 框内。
-    判据②：面积不足同帧最大 person 框的 3%（极远小人/碎片，
-    正常画面里人与人的线性尺寸差极少达 5.8 倍以上）。
-    真实拥挤场景两人虽重叠，面积比很少达 2 倍（拥抱实测 1.7 倍）。
+    判据①：中心点落在另一个面积 ≥2 倍且置信度更高的 person 框内。
+    （宿主必须更高置信：若"宿主"是低置信联合框而 p 是高置信真人，
+    应由 _is_contained_lowconf 淘汰联合框，而不是反过来杀掉真人。
+    且真人框内通常含 mask/goggles 等面部 PPE —— 有 PPE 豁免。）
+    判据②：面积不足同帧最大 person 框的 3%（极远小人/碎片）。
     """
     if not others:
         return False
-    for o in others:
-        # 宿主必须置信度更高：若"宿主"是低置信联合框而 p 是高置信真人，
-        # 应由 _is_contained_lowconf 淘汰联合框，而不是反过来杀掉真人
-        if o.conf <= p.conf:
-            continue
-        if o.area >= 2.0 * p.area and _center_in_box(p.center[0], p.center[1], o):
-            return True
+    if not _contains_ppe_center(p, ppes):
+        for o in others:
+            if o.conf <= p.conf:
+                continue
+            if o.area >= 2.0 * p.area and _center_in_box(p.center[0], p.center[1], o):
+                return True
     largest = max(o.area for o in others)
     return p.area < 0.03 * largest
 
@@ -133,7 +145,8 @@ def _is_union_box(p: Detection, others: list[Detection]) -> bool:
     return count >= 2 and p.area > 0 and covered >= 0.5 * p.area
 
 
-def _dedup_persons(persons: list[Detection]) -> list[Detection]:
+def _dedup_persons(persons: list[Detection],
+                   ppes: list[Detection] | None = None) -> list[Detection]:
     """person 框清理：近重复合并 + 碎片框/联合框剔除（保留置信度最高者）。
 
     背景：YOLO 在密集人群会输出三类伪 person 框——
@@ -150,7 +163,7 @@ def _dedup_persons(persons: list[Detection]) -> list[Detection]:
         result: list[Detection] = []
         for i, p in enumerate(kept):
             higher = kept[:i]  # 置信度更高的已保留框
-            if (_is_fragment(p, kept[:i] + kept[i + 1:])
+            if (_is_fragment(p, kept[:i] + kept[i + 1:], ppes)
                     or _is_contained_lowconf(p, higher)
                     or _is_union_box(p, higher)):
                 changed = True
@@ -171,7 +184,8 @@ def match_person_ppe(detections: list[Detection],
     输入：一帧内的全部 Detection（含 person 与各类 PPE）
     输出：PersonState 列表（每人绑定了属于自己的 PPE）
     """
-    persons = _dedup_persons([d for d in detections if d.cls_name == "person"])
+    persons = _dedup_persons([d for d in detections if d.cls_name == "person"],
+                             ppes=[d for d in detections if d.cls_name != "person"])
     ppes = [d for d in detections if d.cls_name != "person"]
 
     states = [PersonState(person_id=i + 1, bbox=p) for i, p in enumerate(persons)]
