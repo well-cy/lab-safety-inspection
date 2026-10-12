@@ -230,6 +230,43 @@ def main():
             report("t09 合影人数不再被白大褂框吃掉（>=5 人）",
                    n_person >= 5, f"检出人数 = {n_person}（修复前为 4）")
 
+        # ============ BUG-10：倒影过滤器误杀「长在身上的真手套」 ============
+        # 历史 bug：_is_reflection 只看「手套在画面底部 25% + 正上方有 mask/goggles
+        # 同位重叠」就判台面倒影。弯腰伏案者（4K 竖构图）自己的手在画面底部、
+        # 正对自己上方的 mask，完美满足旧判据 → img_17c92cec 3 个 conf 0.71~0.87
+        # 的真手套被全部误杀，网页显示「未佩戴手套」。
+        print("--- BUG-10 _is_reflection 不得误杀手套（长在身上的手） ---")
+        from ai.detector import Detection, PPEDetector as _PPE2
+
+        # _is_reflection 只读类常量，用 __new__ 造个空实例即可（无需加载模型）
+        _refl = _PPE2.__new__(_PPE2)
+
+        def _mk(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # 场景 A（img_17c92cec 缩小复刻）：手套 71%+ 在 person 框内 + 上方同位 mask
+        scene_a = [
+            _mk("person", 0.86, 0, 0, 1000, 1000),
+            _mk("mask",   0.74, 300, 300, 500, 380),
+            _mk("gloves", 0.87, 300, 800, 460, 1000),   # y1=800 > 0.75*1000
+        ]
+        g = scene_a[2]
+        report("身体上的手套不判倒影（≥50% 在 person 框内）",
+               not _refl._is_reflection(g, scene_a, None, 1000),
+               "gloves 与上方 mask 同位重叠但在 person 框内 → 必须保留")
+
+        # 场景 B（真倒影）：手套浮在人身体框外的台面上
+        scene_b = [
+            _mk("person", 0.86, 0, 0, 600, 900),
+            _mk("mask",   0.74, 300, 300, 500, 380),
+            _mk("gloves", 0.66, 300, 950, 460, 990),    # 在 person 框(y2=900)之外
+        ]
+        g2 = scene_b[2]
+        report("台面倒影仍会被正确过滤（person 框外）",
+               _refl._is_reflection(g2, scene_b, None, 1000),
+               "gloves 在 person 框外且上方同位 mask → 判倒影剔除")
+
     finally:
         main_mod.task_manager = saved_tm
         conn = db.get_conn()

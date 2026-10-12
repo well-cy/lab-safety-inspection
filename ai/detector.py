@@ -310,6 +310,18 @@ class PPEDetector:
                        frame: np.ndarray, h: float) -> bool:
         if d.y1 <= self._REFLECT_BOTTOM_Y * h:
             return False
+        # 真手长在身上：手套框大部分（≥50%）落在某个 person 框内 → 是人体的一部分，
+        # 不可能是台面倒影。（2026-10-12 修复：img_17c92cec 4K 竖构图，弯腰伏案者
+        # 自己的手在画面底部、正对自己上方的 mask —— 完美满足旧判据，
+        # 3 个 conf 0.71~0.87 的真手套被当成"口罩倒影"全部误杀。
+        # 真倒影浮在人身体外的台面上，不会整体落在 person 框里。）
+        for o in detections:
+            if o.cls_name != "person":
+                continue
+            iw = min(d.x2, o.x2) - max(d.x1, o.x1)
+            ih = min(d.y2, o.y2) - max(d.y1, o.y1)
+            if iw > 0 and ih > 0 and (iw * ih) / max(d.area, 1e-6) >= 0.5:
+                return False
         dw = d.x2 - d.x1
         for o in detections:
             if o.cls_name not in ("goggles", "mask") or o is d:
