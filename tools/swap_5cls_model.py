@@ -69,32 +69,39 @@ def validate_names(names: dict) -> tuple[bool, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--zip", required=True, help="队友回传的权重 zip 路径")
-    ap.add_argument("--dry-run", action="store_true", help="只校验不换装")
+    ap.add_argument("--zip", required=True,
+                    help="队友回传的权重 zip，或直接给单个 best.pt / *.pt 文件")
+    ap.add_argument("--dry-run", action="store_true", help="只校验不换装（不备份、不写盘）")
     ap.add_argument("--expect-nc", type=int, default=None,
                     help="强制要求类别数（默认自动识别，兼容 4/5/6 类）")
     args = ap.parse_args()
 
     zp = Path(args.zip)
     if not zp.exists():
-        print(f"[ERROR] 找不到 zip: {zp}")
+        print(f"[ERROR] 找不到文件: {zp}")
         return 1
 
-    # ---------- 1) 解压 ----------
-    step("1/5 解压权重包")
-    if TMP_DIR.exists():
-        shutil.rmtree(TMP_DIR)
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zp) as z:
-        z.extractall(TMP_DIR)
-        print("包内文件:", z.namelist())
-    bests = list(TMP_DIR.rglob("best.pt"))
-    lasts = list(TMP_DIR.rglob("last.pt"))
-    if not bests:
-        print("[ERROR] 包里没有 best.pt")
-        return 1
-    new_best = bests[0]
-    print("best.pt:", new_best, "%.1f MB" % (new_best.stat().st_size / 1048576))
+    # ---------- 1) 取出 best.pt（兼容 zip 包 / 单个 .pt 文件） ----------
+    lasts = []
+    if zp.is_file() and zp.suffix.lower() == ".pt":
+        step("1/5 使用指定的权重文件（非 zip）")
+        print("权重文件:", zp, "%.1f MB" % (zp.stat().st_size / 1048576))
+        new_best = zp
+    else:
+        step("1/5 解压权重包")
+        if TMP_DIR.exists():
+            shutil.rmtree(TMP_DIR)
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zp) as z:
+            z.extractall(TMP_DIR)
+            print("包内文件:", z.namelist())
+        bests = list(TMP_DIR.rglob("best.pt"))
+        lasts = list(TMP_DIR.rglob("last.pt"))
+        if not bests:
+            print("[ERROR] 包里没有 best.pt")
+            return 1
+        new_best = bests[0]
+        print("best.pt:", new_best, "%.1f MB" % (new_best.stat().st_size / 1048576))
 
     # ---------- 2) 校验类别（自动识别） ----------
     step("2/5 校验新模型类别（自动识别）")
@@ -124,6 +131,10 @@ def main() -> int:
         print("\n[提示] 这是 5 类模型（无 coverall）。")
 
     # ---------- 3) 备份旧模型 ----------
+    if args.dry_run:
+        print("\n[DRY-RUN] 不备份、不换装。若确认无误，去掉 --dry-run 重跑即可。")
+        return 0
+
     step("3/5 备份当前模型")
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     if LIVE_MODEL.exists():
@@ -135,10 +146,6 @@ def main() -> int:
         print("已备份 →", bak)
     else:
         print("[WARN] 当前无 ai/model/labppe_v8s.pt，跳过备份")
-
-    if args.dry_run:
-        print("\n[DRY-RUN] 校验通过，未改动任何文件。")
-        return 0
 
     # ---------- 4) 换装 ----------
     step("4/5 换装新模型")
