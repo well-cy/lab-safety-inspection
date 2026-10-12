@@ -196,6 +196,40 @@ def main():
                        f"（提示：上报 inferred_frames 便于用户发现 stride 不合理）")
                 if body.get("record_id"):
                     created_records.append(body["record_id"])
+        # ============ BUG-9：跨类 NMS 抑制穿白大褂的人 ============
+        # 历史 bug：_nms_merge 用单一 merged 列表做**跨类**比较，person 框
+        # 会因与 lab_coat 框 IoU>0.55 而被丢弃（且 set 迭代顺序随机 →
+        # 每次重启表现不同）。用户可见症状：「不管多少人都只显示一个人」。
+        print("--- BUG-9 _nms_merge 必须按类独立 ---")
+        from ai.detector import Detection, PPEDetector
+
+        person_box = Detection(cls_name="person", raw_cls="person", conf=0.8,
+                               x1=100, y1=100, x2=300, y2=600)
+        coat_box = Detection(cls_name="lab_coat", raw_cls="lab_coat", conf=0.7,
+                             x1=100, y1=100, x2=300, y2=580)  # 与 person IoU≈0.96
+        merged = PPEDetector._nms_merge([person_box, coat_box], iou_thr=0.55)
+        report("跨类 NMS 不再互相抑制（person + lab_coat 均保留）",
+               len(merged) == 2 and {d.cls_name for d in merged} == {"person", "lab_coat"},
+               f"输入 2 框（IoU≈0.96）→ 输出 {len(merged)} 框: {[d.cls_name for d in merged]}")
+
+        dup_person = Detection(cls_name="person", raw_cls="person", conf=0.5,
+                              x1=102, y1=102, x2=298, y2=598)   # 同类近重复
+        merged2 = PPEDetector._nms_merge([person_box, dup_person], iou_thr=0.55)
+        report("同类近重复框仍会被正确合并（保留高置信）",
+               len(merged2) == 1 and merged2[0].conf == 0.8,
+               f"2 个同类近重复 → {len(merged2)} 框，conf={merged2[0].conf if merged2 else None}")
+
+        # 端到端：t09 合影真实应检出 >=5 人（修复前被 lab_coat 吃到 4 人）
+        t09 = ROOT / "data" / "test" / "t09_lab_coat_ceremony.jpg"
+        if t09.exists():
+            from backend.main import get_image_pipeline
+            from video.processor import process_image
+            pipe = get_image_pipeline()
+            res = process_image(pipe, t09, db.load_areas(config.DEFAULT_LAB_ID))
+            n_person = len(res["person_states"])
+            report("t09 合影人数不再被白大褂框吃掉（>=5 人）",
+                   n_person >= 5, f"检出人数 = {n_person}（修复前为 4）")
+
     finally:
         main_mod.task_manager = saved_tm
         conn = db.get_conn()

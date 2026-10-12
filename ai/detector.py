@@ -405,15 +405,32 @@ class PPEDetector:
 
     @staticmethod
     def _nms_merge(detections: list[Detection], iou_thr: float = 0.55) -> list[Detection]:
-        """类内贪心 NMS：合并多尺度重复框，保留高置信度"""
+        """类内贪心 NMS：合并多尺度重复框，保留高置信度。
+
+        ⚠️ 必须**按类别各自独立**做抑制（2026-10-12 修复）。
+
+        历史 bug：早期实现只用一个全局 merged 列表做跨类比较
+        （`any(_iou(d, m) > iou_thr for m in merged)`），而 merged 里混着
+        所有已处理的类别。后果是**穿白大褂的人被自己的 lab_coat 框吃掉** ——
+        person 框与 lab_coat 框 IoU 常达 0.56~0.69 > 0.55。实测：
+          t09 实验室合影 7 人 → 4 人；t02 砷实验室 1 人 → 0 人；
+          t07 雌激素实验 1 人 → 0 人；img_b8ab4fdf 3 人 → 2 人。
+        更隐蔽的是外层 `for cls in {d.cls_name ...}` 遍历字符串集合，
+        集合迭代顺序受 PYTHONHASHSEED 随机化影响 → **谁抑制谁每次重启都变**，
+        表现为「有时人少一个、有时白大褂少一个」的幽灵 bug。
+        """
         merged: list[Detection] = []
-        for cls in {d.cls_name for d in detections}:
-            group = sorted((d for d in detections if d.cls_name == cls),
-                           key=lambda d: -d.conf)
+        by_cls: dict[str, list[Detection]] = {}
+        for d in detections:
+            by_cls.setdefault(d.cls_name, []).append(d)
+        for group in by_cls.values():          # 每类一个独立 kept 列表
+            group = sorted(group, key=lambda d: -d.conf)
+            kept: list[Detection] = []
             for d in group:
-                if any(_iou(d, m) > iou_thr for m in merged):
-                    continue
-                merged.append(d)
+                if any(_iou(d, m) > iou_thr for m in kept):
+                    continue                    # 只与同类比较
+                kept.append(d)
+            merged.extend(kept)
         merged.sort(key=lambda d: -d.conf)
         return merged
 
