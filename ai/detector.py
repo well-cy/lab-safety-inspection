@@ -271,12 +271,35 @@ class PPEDetector:
                     continue  # 画面底部（鞋/脚误检）
                 if self._is_reflection(d, detections, frame, h):
                     continue  # 玻璃台面倒影误检
+                # 手套不应占"其所叠 person 框"的 35%+（牛仔裤/衣料误检，
+                # 如 lc13_GMG6BHZE45MT 病人蓝牛仔裤被认成手套 0.45，
+                # 占该 person 框 45%）——真手再近也很少超过所属人体 1/3
+                if self._glove_dominates_person(d, detections):
+                    continue
             out.append(d)
         return out
 
     # 倒影判据：手套框位于画面底部 25%，正上方有横向重叠的护目镜/口罩框
     # （玻璃台面把 PPE 镜像到下方，如 img_104e87bc 台面倒影被认成手套 0.66）
     _REFLECT_BOTTOM_Y = 0.75
+
+    # 手套占所属 person 框面积比上限（lc13_GMG6BHZE45MT 牛仔裤误检 45%）
+    _GLOVE_PERSON_RATIO = 0.35
+
+    def _glove_dominates_person(self, d: Detection,
+                                detections: list[Detection]) -> bool:
+        """手套框面积超过与其重叠的最小 person 框的 35% → 衣料/裤料误检。"""
+        g_area = (d.x2 - d.x1) * (d.y2 - d.y1)
+        for o in detections:
+            if o.cls_name != "person":
+                continue
+            iw = min(d.x2, o.x2) - max(d.x1, o.x1)
+            ih = min(d.y2, o.y2) - max(d.y1, o.y1)
+            if iw > 0 and ih > 0:
+                p_area = (o.x2 - o.x1) * (o.y2 - o.y1)
+                if p_area > 0 and g_area >= self._GLOVE_PERSON_RATIO * p_area:
+                    return True
+        return False
 
     def _is_reflection(self, d: Detection, detections: list[Detection],
                        frame: np.ndarray, h: float) -> bool:

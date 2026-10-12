@@ -79,10 +79,38 @@ def _is_fragment(p: Detection, others: list[Detection]) -> bool:
     if not others:
         return False
     for o in others:
+        # 宿主必须置信度更高：若"宿主"是低置信联合框而 p 是高置信真人，
+        # 应由 _is_contained_lowconf 淘汰联合框，而不是反过来杀掉真人
+        if o.conf <= p.conf:
+            continue
         if o.area >= 2.0 * p.area and _center_in_box(p.center[0], p.center[1], o):
             return True
     largest = max(o.area for o in others)
     return p.area < 0.03 * largest
+
+
+def _is_contained_lowconf(p: Detection, others: list[Detection]) -> bool:
+    """「被包含的低置信框」判定（联合框猎手）。
+
+    场景：联合框比真人框更大、置信度更低（套住 1~2 个真人），
+    碎片判定只检查"小框是否被大框包含"轮不到它——因为它是大框。
+    本判定反向：若 p 的框**包含**某个中心在 p 内、面积 ≥2 倍差的
+    更高置信框（即 p 套着一个更可信的真人大框），p 大概率是联合框。
+    判据：存在更高置信框 o，o.center 在 p 内、o 被 p 包含 ≥80%、
+    且 p.area >= 2.0 * o.area。
+    拥抱场景联合框与真人比仅 1.7 倍 → 不会误杀。
+    """
+    for o in others:
+        if o.conf <= p.conf or o.area == 0:
+            continue
+        iw = min(p.x2, o.x2) - max(p.x1, o.x1)
+        ih = min(p.y2, o.y2) - max(p.y1, o.y1)
+        inter = max(0.0, iw) * max(0.0, ih)
+        if (p.area >= 2.0 * o.area
+                and _center_in_box(o.center[0], o.center[1], p)
+                and inter / o.area >= 0.8):
+            return True
+    return False
 
 
 def _is_union_box(p: Detection, others: list[Detection]) -> bool:
@@ -122,7 +150,9 @@ def _dedup_persons(persons: list[Detection]) -> list[Detection]:
         result: list[Detection] = []
         for i, p in enumerate(kept):
             higher = kept[:i]  # 置信度更高的已保留框
-            if _is_fragment(p, higher) or _is_union_box(p, higher):
+            if (_is_fragment(p, kept[:i] + kept[i + 1:])
+                    or _is_contained_lowconf(p, higher)
+                    or _is_union_box(p, higher)):
                 changed = True
                 continue
             result.append(p)
