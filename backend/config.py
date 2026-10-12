@@ -148,6 +148,11 @@ class Config:
         # 可作为区域 PPE 要求的业务类别；person 是检测主体，不是 PPE。
         # 该列表与 ai/detector.py 的 SYSTEM_CLASSES 对齐，属契约内容，
         # 如需变更请走契约评审，不要用环境变量绕过。
+        #
+        # 注意：coverall（连体防护服）**故意不列入**。
+        # 按 E5.7 口径（Route B'），连体防护服不满足 lab_coat 要求，
+        # 它是「未穿实验服」这一违规的**证据类别**，而非区域可配置的必备 PPE。
+        # 它出现在检测结果里，但不作为 required_ppe 的可选值。
         self.ALLOWED_PPE = ["mask", "gloves", "lab_coat", "goggles", "helmet"]
 
     def ensure_dirs(self) -> None:

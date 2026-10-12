@@ -37,18 +37,21 @@ CLASS_ALIAS = {
     "face-guard": "goggles",
     "helmet": "helmet",
     "safety-vest": None,
-    "medical-suit": "lab_coat",
-    "safety-suit": "lab_coat",
+    "medical-suit": "coverall",
+    "safety-suit": "coverall",
+    "coverall": "coverall",
+    "coveralls": "coverall",
     "shoes": None,
 }
 
 # 系统支持的业务类别
-SYSTEM_CLASSES = ["person", "mask", "gloves", "lab_coat", "goggles", "helmet"]
+SYSTEM_CLASSES = ["person", "mask", "gloves", "lab_coat", "goggles", "coverall", "helmet"]
 
 # 业务类别中文名称
 CLASS_CN = {
     "person": "人员", "mask": "口罩", "gloves": "手套",
     "lab_coat": "实验服", "goggles": "护目镜", "helmet": "安全帽",
+    "coverall": "连体防护服",
 }
 
 
@@ -89,7 +92,7 @@ def map_class(raw_name: str) -> str | None:
     key = _normalize(raw_name)
     if key in CLASS_ALIAS:
         return CLASS_ALIAS[key]
-    # 兜底：子串匹配
+    # 兜底：子串匹配（顺序重要，coverall 必须排在 lab_coat 之前判断）
     if "person" in key:
         return "person"
     if "mask" in key:
@@ -100,6 +103,8 @@ def map_class(raw_name: str) -> str | None:
         return "goggles"
     if "helmet" in key or "hardhat" in key:
         return "helmet"
+    if "coverall" in key:
+        return "coverall"
     if "suit" in key or "coat" in key:
         return "lab_coat"
     return None
