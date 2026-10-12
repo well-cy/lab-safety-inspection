@@ -200,30 +200,44 @@ def match_person_ppe(detections: list[Detection],
         )
         states = [PersonState(person_id=1, bbox=virt, virtual=True)]
 
+    # 各类 PPE 的解剖学合理带：PPE 中心相对 person 框顶部的比例（rel_y）。
+    # 口罩/护目镜只可能出现在头部（框顶部 ~45%）；手套在躯干活动范围；
+    # 站立者的"手套"落到框底部 12%（脚部）几乎必然是错检或他人的手。
+    # 用于多人框重叠时消歧：坐姿者框往往高大（含椅子），其 PPE 中心
+    # 也会落进旁边站立者的小框内且贴近底部 —— 旧逻辑"取面积最小"
+    # 会把坐姿者的 PPE 全部判给站立者（img_d020e947 实测案例）。
+    _PPE_BAND = {
+        "mask": (0.0, 0.45),
+        "goggles": (0.0, 0.45),
+        "helmet": (0.0, 0.35),
+        "gloves": (0.08, 0.88),
+        "lab_coat": (0.05, 0.92),
+        "coverall": (0.05, 0.92),
+    }
+
+    def _cand(st):
+        """返回 (exact中心在框内, plausible解剖学合理, st)"""
+        b = st.bbox
+        w, h = b.x2 - b.x1, b.y2 - b.y1
+        exact = b.x1 <= px <= b.x2 and b.y1 <= py <= b.y2
+        expanded = (b.x1 - w * 0.4) <= px <= (b.x2 + w * 0.4) \
+            and (b.y1 - h * 0.4) <= py <= (b.y2 + h * 0.4)
+        lo, hi = _PPE_BAND.get(ppe.cls_name, (0.0, 1.0))
+        rel = (py - b.y1) / h if h > 0 else 0.5
+        plausible = lo <= rel <= hi
+        return (exact or expanded), exact, plausible, st
+
     for ppe in ppes:
         px, py = ppe.center
-        # 规则1：中心点在 person 框内
         owner = None
-        for st in states:
-            if _center_in_box(px, py, st.bbox):
-                if owner is None or st.bbox.area < owner.bbox.area:
-                    owner = st  # 多人重叠时归属更小（更可能是本人）的框
-        # 规则2：扩张框兜底 —— person 框常切掉伸出的手臂/腿部（弯腰操作显微镜、
-        # 伸手取试剂等），手套框在原始框外但显然属于该人。
-        # 把 person 框向四周扩张 40%，PPE 中心落在扩张框内即归属；
-        # 多人扩张框重叠时归属面积最小（最贴近 PPE）的人。
-        if owner is None and states:
-            def expand_box(st, ratio: float = 0.4):
-                b = st.bbox
-                w, h = b.x2 - b.x1, b.y2 - b.y1
-                return (b.x1 - w * ratio, b.y1 - h * ratio,
-                        b.x2 + w * ratio, b.y2 + h * ratio)
-
-            cands = [st for st in states
-                     if expand_box(st)[0] <= px <= expand_box(st)[2]
-                     and expand_box(st)[1] <= py <= expand_box(st)[3]]
-            if cands:
-                owner = min(cands, key=lambda st: st.bbox.area)
+        # 统一候选集：中心落在 person 框内（规则1）或 40% 扩张框内（规则2）。
+        # 优先级：解剖学合理 > 精确包含 > 面积最小。
+        # （旧逻辑分两步且"面积最小"优先，导致坐姿人员的 PPE 被
+        #   重叠的站立者小框整体抢走。）
+        cands = [c for c in (_cand(st) for st in states) if c[0]]
+        if cands:
+            best = max(cands, key=lambda c: (c[2], c[1], -c[3].bbox.area))
+            owner = best[3]
         # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）
         if owner is None and states:
             def dist(st):

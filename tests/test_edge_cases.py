@@ -267,6 +267,37 @@ def main():
                _refl._is_reflection(g2, scene_b, None, 1000),
                "gloves 在 person 框外且上方同位 mask → 判倒影剔除")
 
+        # ============ BUG-11：坐姿者 PPE 被重叠站立者小框整体抢走 ============
+        print("--- BUG-11 match_person_ppe 解剖学消歧（坐姿 vs 站立重叠） ---")
+        from ai.detector import Detection
+        from ai.ppe_matcher import match_person_ppe as _match
+
+        def _mk(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # img_d020e947 按比例缩小复刻：坐姿者大框（含椅子）+ 站立者小框
+        # 与坐姿者上半身重叠。坐姿者的 mask/gloves 中心同时落在两个框内。
+        p_seated = _mk("person", 0.83, 528, 115, 692, 500)   # 大框
+        p_stand  = _mk("person", 0.74, 633,  77, 750, 273)   # 小框，重叠
+        mask_s   = _mk("mask",   0.72, 623, 157, 650, 181)   # 中心(636,169) 坐姿者的
+        mask_t   = _mk("mask",   0.78, 676, 118, 713, 147)   # 中心(694,133) 站立者的
+        glove_s  = _mk("gloves", 0.83, 697, 243, 725, 263)   # 中心(710,253)
+
+        sts = _match([p_seated, p_stand, mask_s, mask_t, glove_s])
+        by_area = {s.bbox.area: s for s in sts}
+        big = by_area[max(by_area)]      # 坐姿者
+        small = by_area[min(by_area)]    # 站立者
+        report("坐姿者的口罩不被站立者抢走（mask 在其头部高度）",
+               "mask" in big.ppe,
+               "mask 中心在坐姿者框 rel_y=0.14（脸），站立者框 rel_y=0.47（肚子，不合理）")
+        report("站立者本人的 mask 保留（在其头部高度）",
+               "mask" in small.ppe,
+               "站立者自己的 mask 仍归站立者")
+        report("显微伸手的手套归坐姿者（站立者框底部不合理）",
+               "gloves" in big.ppe,
+               "gloves 中心在站立者框 rel_y=0.90（脚部，不合理）→ 归坐姿者扩张框")
+
     finally:
         main_mod.task_manager = saved_tm
         conn = db.get_conn()
