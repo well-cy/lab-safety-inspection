@@ -114,7 +114,23 @@ def match_person_ppe(detections: list[Detection],
             if _center_in_box(px, py, st.bbox):
                 if owner is None or st.bbox.area < owner.bbox.area:
                     owner = st  # 多人重叠时归属更小（更可能是本人）的框
-        # 规则2：最近人员兜底
+        # 规则2：扩张框兜底 —— person 框常切掉伸出的手臂/腿部（弯腰操作显微镜、
+        # 伸手取试剂等），手套框在原始框外但显然属于该人。
+        # 把 person 框向四周扩张 40%，PPE 中心落在扩张框内即归属；
+        # 多人扩张框重叠时归属面积最小（最贴近 PPE）的人。
+        if owner is None and states:
+            def expand_box(st, ratio: float = 0.4):
+                b = st.bbox
+                w, h = b.x2 - b.x1, b.y2 - b.y1
+                return (b.x1 - w * ratio, b.y1 - h * ratio,
+                        b.x2 + w * ratio, b.y2 + h * ratio)
+
+            cands = [st for st in states
+                     if expand_box(st)[0] <= px <= expand_box(st)[2]
+                     and expand_box(st)[1] <= py <= expand_box(st)[3]]
+            if cands:
+                owner = min(cands, key=lambda st: st.bbox.area)
+        # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）
         if owner is None and states:
             def dist(st):
                 cx, cy = st.bbox.center
