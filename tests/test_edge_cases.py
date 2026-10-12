@@ -298,6 +298,39 @@ def main():
                "gloves" in big.ppe,
                "gloves 中心在站立者框 rel_y=0.90（脚部，不合理）→ 归坐姿者扩张框")
 
+        # ============ BUG-12：底部手套被「鞋/脚误检」规则无差别误杀 ============
+        print("--- BUG-12 底部真手不被 0.86 规则误杀（长在身上守卫） ---")
+        import numpy as np
+        from ai.detector import PPEDetector as _PPE3
+        # 不加载模型的轻量实例（_filter_implausible 只依赖类级常量与方法）
+        _det3 = object.__new__(_PPE3)
+
+        def _mk2(cls, cf, x1, y1, x2, y2):
+            return Detection(cls_name=cls, raw_cls=cls, conf=cf,
+                             x1=x1, y1=y1, x2=x2, y2=y2)
+
+        # img_89128025 复刻：主研究员的手在画面最底部（y1=0.88h），
+        # 与 person 框重叠 40% 面积 → 是手不是鞋
+        scene_c = [
+            _mk2("person", 0.62, 380,   7, 762, 423),
+            _mk2("gloves", 0.64, 303, 381, 453, 432),
+        ]
+        frame = np.zeros((432, 768, 3), dtype=np.uint8)
+        kept = _det3._filter_implausible(scene_c, frame)
+        report("画面底部但长在身上的手保留（与 person 重叠≥35%）",
+               any(d.cls_name == "gloves" for d in kept),
+               "特写构图手在画面底部 y1=0.88h，conf 0.637 不应被当鞋丢弃")
+
+        # 对照：底部手套与 person 框无实质重叠（真正的鞋/脚场景）
+        scene_d = [
+            _mk2("person", 0.62, 380,   7, 762, 300),   # person 框在手套上方结束
+            _mk2("gloves", 0.64, 303, 381, 453, 432),
+        ]
+        kept2 = _det3._filter_implausible(scene_d, frame)
+        report("与人体无重叠的底部手套仍被过滤（鞋/脚）",
+               not any(d.cls_name == "gloves" for d in kept2),
+               "person 框在手套上方结束 → 底部手套判鞋/脚剔除")
+
     finally:
         main_mod.task_manager = saved_tm
         conn = db.get_conn()

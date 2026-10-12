@@ -272,8 +272,13 @@ class PPEDetector:
             if d.cls_name == "gloves":
                 if (d.x2 - d.x1) * (d.y2 - d.y1) > self._GLOVES_MAX_AREA_RATIO * w * h:
                     continue  # 面积超限（袖子/衣料误检）
-                if d.y1 > self._GLOVES_BOTTOM_Y * h:
-                    continue  # 画面底部（鞋/脚误检）
+                # 画面底部（鞋/脚误检）——但与 person 框实质重叠的是"长在身上的手"
+                # （2026-10-12 修复：img_89128025 特写构图，主研究员的手在画面
+                #   最底部 y1=0.88h 被 0.86 规则误杀，conf 高达 0.637；
+                #   原防护案例 img_ed8a1e3e 的鞋误检在换 6 类模型后已不复出现）
+                if d.y1 > self._GLOVES_BOTTOM_Y * h \
+                        and not self._overlaps_person_body(d, detections):
+                    continue
                 if self._is_reflection(d, detections, frame, h):
                     continue  # 玻璃台面倒影误检
                 # 手套不应占"其所叠 person 框"的 35%+（牛仔裤/衣料误检，
@@ -290,6 +295,21 @@ class PPEDetector:
 
     # 手套占所属 person 框面积比上限（lc13_GMG6BHZE45MT 牛仔裤误检 45%）
     _GLOVE_PERSON_RATIO = 0.35
+
+    def _overlaps_person_body(self, d: Detection,
+                              detections: list[Detection]) -> bool:
+        """手套框与某 person 框实质重叠（≥35% 手套面积）→ 长在身上的手，非鞋/脚。"""
+        g_area = (d.x2 - d.x1) * (d.y2 - d.y1)
+        if g_area <= 0:
+            return False
+        for o in detections:
+            if o.cls_name != "person":
+                continue
+            iw = min(d.x2, o.x2) - max(d.x1, o.x1)
+            ih = min(d.y2, o.y2) - max(d.y1, o.y1)
+            if iw > 0 and ih > 0 and iw * ih >= 0.35 * g_area:
+                return True
+        return False
 
     def _glove_dominates_person(self, d: Detection,
                                 detections: list[Detection]) -> bool:
