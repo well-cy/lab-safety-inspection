@@ -227,7 +227,7 @@ def match_person_ppe(detections: list[Detection],
         if (ppe.cls_name == "gloves" and not st.virtual
                 and glove_taken.get(id(st), 0) >= 2):
             return None
-        """返回 (空间命中, 精确包含, 解剖学合理, 已有同类PPE, st)"""
+        """返回 (空间命中, 精确包含, 解剖学合理, 重叠占比, 已有同类PPE, st)"""
         b = st.bbox
         w, h = b.x2 - b.x1, b.y2 - b.y1
         exact = b.x1 <= px <= b.x2 and b.y1 <= py <= b.y2
@@ -236,6 +236,14 @@ def match_person_ppe(detections: list[Detection],
         lo, hi = _PPE_BAND.get(ppe.cls_name, (0.0, 1.0))
         rel = (py - b.y1) / h if h > 0 else 0.5
         plausible = lo <= rel <= hi
+        # ⑥ 重叠占比：PPE 框与 person 框交集 / PPE 框面积。
+        # 中心点可能恰好压在 person 框边缘外零点几像素（img_9491b9ea：
+        # 手套中心 x=2880.6，联合框右缘 x=2880.58），此时 exact 双双落空，
+        # 退化为"面积最小"会把伸出的手判给旁边的小框候选者。
+        # 用框重叠占比消歧比单点中心稳健得多。
+        iw = max(0.0, min(ppe.x2, b.x2) - max(ppe.x1, b.x1))
+        ih = max(0.0, min(ppe.y2, b.y2) - max(ppe.y1, b.y1))
+        overlap = (iw * ih) / ppe.area if ppe.area > 0 else 0.0
         # ④ 手套"成对先验"：该人已绑定同类 PPE（已检出一只手套）→ 强归属信号。
         # 手套在实验室是成对使用的；已有一只的人伸出的另一只手，比"框外伸手
         # 恰好落进旁人精确框"更可信。
@@ -246,7 +254,7 @@ def match_person_ppe(detections: list[Detection],
         sibling = False
         if ppe.cls_name == "gloves" and "gloves" in st.ppe:
             sibling = _iou(ppe, st.ppe["gloves"]) < 0.5
-        return (exact or expanded), exact, plausible, sibling, st
+        return (exact or expanded), exact, plausible, overlap, sibling, st
 
     # PPE 按置信度降序归属：保证"先到先得"落在这只手上置信度最高的那个框，
     # 避免同目标的低置信重复框抢在真框之前把它绑给别人。
@@ -267,8 +275,8 @@ def match_person_ppe(detections: list[Detection],
         # 优先级：手套已有同类（成对先验） > 解剖学合理 > 精确包含 > 面积最小。
         cands = [c for c in (_cand(st) for st in states) if c is not None]
         if cands:
-            best = max(cands, key=lambda c: (c[3], c[2], c[1], -c[4].bbox.area))
-            owner = best[4]
+            best = max(cands, key=lambda c: (c[4], c[2], c[1], c[3], -c[5].bbox.area))
+            owner = best[5]
         # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）
         if owner is None and states:
             def dist(st):

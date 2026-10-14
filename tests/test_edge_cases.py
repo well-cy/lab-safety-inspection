@@ -20,6 +20,7 @@
      BUG-13 切片复检的高包含率重复框逃逸（IoU 不够但 100% 被包含）
      BUG-14 手套错归：伸出框外的手被"精确包含优先"判给旁人（成对先验修复）
      BUG-15 成对先验副作用：相邻两人的手套全被先绑者吸走（满额上限 2 只修复）
+     BUG-16 手套中心压 person 框缘 0.02px → 无精确命中时按重叠占比消歧
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -432,6 +433,36 @@ def main():
         report("未满额时先验照常生效",
                n_g == 2,
                f"男1={sorted(a5.ppe)}，女2={sorted(b5.ppe)}（2 人共绑定 {n_g} 只）")
+
+        # ============ BUG-16：中心点压线 → 重叠占比消歧 ============
+        # img_9491b9ea 复刻：左男的手套框中心 x=2880.6 恰好压在左侧大框
+        # 右缘 x=2880.58 外 0.02 像素 → 两个候选都退化为"扩张框命中"，
+        # 旧规则"面积最小"让小框（右女）赢走左男伸出的手。
+        # 修复：无精确命中时改用 PPE 框与 person 框的重叠占比消歧
+        # （手套 50% 落在左侧大框内、仅 24% 落在右女框内）。
+        print("--- BUG-16 中心点压线时按重叠占比消歧 ---")
+        from ai.ppe_matcher import match_person_ppe as _match4
+
+        p_union = _mk2("person", 0.67, 271, 444, 2881, 3929)   # 左男+中男联合大框
+        p_w = _mk2("person", 0.82, 3022, 1484, 4191, 3148)     # 右女（小框）
+        g_edge = _mk2("gloves", 0.74, 2607, 2027, 3154, 2736)  # 左男的手（压线伸出）
+
+        sts6 = _match4([p_union, p_w, g_edge])
+        u6 = [s for s in sts6 if abs(s.bbox.area - p_union.area) < 1e-6][0]
+        w6 = [s for s in sts6 if abs(s.bbox.area - p_w.area) < 1e-6][0]
+        report("压线手套归重叠占比大的一方",
+               "gloves" in u6.ppe and "gloves" not in w6.ppe,
+               f"大框={sorted(u6.ppe)}，右女={sorted(w6.ppe)}"
+               "（修复前右女因面积最小赢走手套）")
+
+        # 对照：手套大部分在右女框内时，占比规则应同样支持右女
+        g_right = _mk2("gloves", 0.70, 3050, 2000, 3400, 2250)  # 右女躯干前的手
+        sts7 = _match4([p_union, p_w, g_right])
+        u7 = [s for s in sts7 if abs(s.bbox.area - p_union.area) < 1e-6][0]
+        w7 = [s for s in sts7 if abs(s.bbox.area - p_w.area) < 1e-6][0]
+        report("重叠占比规则双向有效（对照组）",
+               "gloves" in w7.ppe and "gloves" not in u7.ppe,
+               f"大框={sorted(u7.ppe)}，右女={sorted(w7.ppe)}")
 
     finally:
         main_mod.task_manager = saved_tm
