@@ -106,10 +106,13 @@ def get_pipeline():
                 # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
                 # conf_person：person 类单独阈值（重叠人群中放宽真人检出，
                 # 不让 PPE 类跟着降阈值引入假阳性）—— 见 docs/E5_11
+                # conf_goggles：goggles 类单独阈值（收紧普通眼镜误判护目镜，
+                # 见 docs/E5_9 BUG-18）
                 _detector = PPEDetector(MODEL_PATH,
                                         conf_threshold=config.CONF_THRESHOLD,
                                         device=config.DEVICE,
-                                        conf_person=config.CONF_PERSON)
+                                        conf_person=config.CONF_PERSON,
+                                        conf_goggles=config.CONF_GOGGLES)
                 _pipeline = InspectionPipeline(
                     detector=_detector,
                     engine=SafetyRuleEngine(config.MINOR_THRESHOLD),

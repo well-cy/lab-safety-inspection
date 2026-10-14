@@ -127,6 +127,14 @@ class Config:
         # ⚠️ 注意此值贴近实测样本，若有新的漏检/误报样本需重新标定。
         # 设为与 CONF_THRESHOLD 相同即恢复旧行为。
         self.CONF_PERSON = _env_float("CONF_PERSON", 0.28)
+        # goggles 类的独立阈值（2026-10-14 BUG-18，方向与 CONF_PERSON 相反：收紧）。
+        # 模型会把普通近视镜/眼镜误判成护目镜（img_169f81a5 中间男士近视镜
+        # conf 0.389 > 全局 0.35 → 凭空多出"佩戴护目镜"），而真护目镜实测
+        # conf 全部 ≥ 0.70（t01 0.842 / img_169f81a5 0.703 / img_fe7aaa21 0.721）。
+        # 夹逼取 0.50：挡掉普通眼镜假阳性，t01~t10 与近期上传图零伤亡。
+        # 代价：0.35~0.50 之间的低置信真护目镜会被漏掉（野外召回略降）。
+        # 设为与 CONF_THRESHOLD 相同（0.35）即恢复旧行为。
+        self.CONF_GOGGLES = _env_float("CONF_GOGGLES", 0.50)
         # "auto" = 有 CUDA 用 GPU，否则 CPU；也可显式指定 "cpu" / 0 / 1
         self.DEVICE = _env_str("DEVICE", "auto")
 
@@ -190,6 +198,7 @@ class Config:
             "screenshot_dir": str(self.SCREENSHOT_DIR),
             "conf_threshold": self.CONF_THRESHOLD,
             "conf_person": self.CONF_PERSON,
+            "conf_goggles": self.CONF_GOGGLES,
             "device": self.DEVICE,
             "video_stride": self.VIDEO_STRIDE,
             "violation_cooldown_s": self.VIOLATION_COOLDOWN_S,

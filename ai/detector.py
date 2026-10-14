@@ -206,7 +206,8 @@ class PPEDetector:
     """YOLO PPE 检测器"""
 
     def __init__(self, weights: str, conf_threshold: float = 0.35, device: str = "auto",
-                 imgsz: int = 640, conf_person: float | None = None):
+                 imgsz: int = 640, conf_person: float | None = None,
+                 conf_goggles: float | None = None):
         from ultralytics import YOLO  # 延迟导入，加快模块加载
         self.weights_path = str(weights)
         self.model = YOLO(self.weights_path)
@@ -216,6 +217,12 @@ class PPEDetector:
         # 引入假阳性（右女被塞假 mask 0.339）。故只对 person 放宽。
         # None = 与 conf_threshold 一致（旧行为）。
         self.conf_person = conf_person
+        # goggles 单独阈值（2026-10-14 BUG-18）：模型会把普通近视镜/眼镜误判成
+        # 护目镜（img_169f81a5 中间男士近视镜 conf 0.389 > 全局 0.35），而真护目镜
+        # 实测 conf 全部 ≥ 0.70（t01 0.842 / img_169f81a5 0.703 / img_fe7aaa21 0.721）。
+        # 夹逼取 0.50：挡掉普通眼镜假阳性，真护目镜零伤亡。
+        # 方向与 person 相反：person 放宽（0.28 < 0.35），goggles 收紧（0.50 > 0.35）。
+        self.conf_goggles = conf_goggles
         self.imgsz = imgsz
         if device == "auto":
             import torch
@@ -235,22 +242,35 @@ class PPEDetector:
 
     @staticmethod
     def _apply_class_thresholds(dets: list[Detection], conf: float,
-                                conf_person: float | None) -> list[Detection]:
-        """按类收口：person 用 conf_person，其余类用 conf（2026-10-14 方案 C）。
+                                conf_person: float | None,
+                                conf_goggles: float | None = None) -> list[Detection]:
+        """按类收口：person 用 conf_person，goggles 用 conf_goggles，其余类用 conf。
 
-        推理阶段统一用 min(conf, conf_person) 低阈值跑（保证不漏），
+        方案 C（2026-10-14）：person 放宽（重叠人群中真人 conf 被联合框压低）；
+        BUG-18（2026-10-14）：goggles 收紧（普通眼镜误判护目镜，真护目镜 conf 显著更高）。
+
+        推理阶段统一用 min(所有阈值) 低阈值跑（保证不漏），
         最后在这里按类过滤。必须放在**所有**检测来源（全图双尺度 + 切片复检）
         汇总之后——切片复检同样会产出低置信 PPE 假阳性
         （img_9491b9ea 的假 mask 0.339 就是切片产物）。
         """
-        if conf_person is None or conf_person == conf:
+        if (conf_person is None or conf_person == conf) and \
+           (conf_goggles is None or conf_goggles == conf):
             return dets
-        return [d for d in dets
-                if d.conf >= (conf_person if d.cls_name == "person" else conf)]
+
+        def _thr(name: str) -> float:
+            if name == "person" and conf_person is not None:
+                return conf_person
+            if name == "goggles" and conf_goggles is not None:
+                return conf_goggles
+            return conf
+
+        return [d for d in dets if d.conf >= _thr(d.cls_name)]
 
     def detect(self, frame: np.ndarray, conf: float | None = None,
                tile_recheck: bool = False,
-               conf_person: float | None = None) -> list[Detection]:
+               conf_person: float | None = None,
+               conf_goggles: float | None = None) -> list[Detection]:
         """对单帧图像（BGR ndarray）执行检测，返回业务类别 Detection 列表
 
         双尺度：imgsz 与 640 不同时，两个尺度各推理一次取并集（不同目标
@@ -260,11 +280,15 @@ class PPEDetector:
         如正面透明护目镜），代价是推理耗时约 ×2.5，仅建议图片模式开启。
         conf_person：person 类的独立阈值（None=沿用 conf）。用于重叠人群
         场景放宽真人检出，同时不让 PPE 类跟着降阈值引入假阳性。
+        conf_goggles：goggles 类的独立阈值（None=沿用 conf）。用于收紧
+        普通眼镜误判护目镜的假阳性（真护目镜 conf 显著更高）。
         """
         base_conf = conf or self.conf_threshold
         p_conf = conf_person if conf_person is not None else self.conf_person
+        g_conf = conf_goggles if conf_goggles is not None else self.conf_goggles
         # 推理统一用最低阈值，最后按类收口
-        low = min(base_conf, p_conf) if p_conf is not None else base_conf
+        lows = [base_conf] + [v for v in (p_conf, g_conf) if v is not None]
+        low = min(lows)
         scales = sorted({640, self.imgsz})
         detections: list[Detection] = []
         for sz in scales:
@@ -297,7 +321,7 @@ class PPEDetector:
             detections += self._tile_detect(frame, low, full_dets=detections)
         merged = self._nms_merge(detections) if (len(scales) > 1 or tile_recheck) else detections
         merged = self._filter_implausible(merged, frame)
-        return self._apply_class_thresholds(merged, base_conf, p_conf)
+        return self._apply_class_thresholds(merged, base_conf, p_conf, g_conf)
 
     # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 20%
     # （白大褂袖子/衣料被误认成手套时框可达画面 25%~33%：特写构图 33%、

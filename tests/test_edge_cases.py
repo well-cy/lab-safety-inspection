@@ -22,6 +22,7 @@
      BUG-15 成对先验副作用：相邻两人的手套全被先绑者吸走（满额上限 2 只修复）
      BUG-16 手套中心压 person 框缘 0.02px → 无精确命中时按重叠占比消歧
      BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
+     BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.50）
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -498,6 +499,37 @@ def main():
         report("conf_person 与 conf 相互独立",
                names3 == ["mask"],
                f"0.35/0.90 → 保留 {names3}（person 被 0.90 挡、mask 0.45 按 0.35 保留）")
+
+        # ============ BUG-18：goggles 按类阈值收紧（普通眼镜误判护目镜） ============
+        # img_169f81a5：中间男士戴普通近视镜，模型判成护目镜（conf 0.389 >
+        # 全局 0.35 → 凭空多出"佩戴护目镜"）；右侧女生眼镜 0.251 险过。
+        # 实测真护目镜 conf 全部 ≥ 0.70 → 夹逼取 0.50 收紧 goggles。
+        print("--- BUG-18 goggles 按类阈值收紧（普通眼镜假阳性） ---")
+
+        g_fake = _mk2("goggles", 0.389, 2414, 453, 2927, 722)  # 近视镜误检
+        g_real = _mk2("goggles", 0.703, 1076, 1097, 1760, 1623)  # 真护目镜
+        m_std = _mk2("mask", 0.40, 500, 500, 700, 600)          # 普通 PPE 对照
+
+        kept4 = _PPED._apply_class_thresholds([g_fake, g_real, m_std],
+                                              0.35, 0.28, 0.50)
+        names4 = sorted(d.cls_name for d in kept4)
+        report("goggles 按 0.50 收口，真护目镜保留、眼镜误检被挡",
+               names4 == ["goggles", "mask"],
+               f"0.35/0.28/0.50 收口后保留 {names4}"
+               "（假 goggles 0.389 被挡、真 goggles 0.703 保留）")
+
+        # 独立性：未配置 conf_goggles 时 goggles 仍按全局 conf 判断
+        kept5 = _PPED._apply_class_thresholds([g_fake, g_real], 0.35, 0.28, None)
+        names5 = sorted(d.cls_name for d in kept5)
+        report("未配置 conf_goggles 时 goggles 不受影响",
+               names5 == ["goggles", "goggles"],
+               f"None → goggles 按 0.35 保留 {names5}（与 conf_person 独立）")
+
+        # 守卫：conf_person 与 conf_goggles 同时为默认语义时短路（旧行为）
+        kept6 = _PPED._apply_class_thresholds([g_fake, g_real], 0.35, None, None)
+        report("两阈值均未配置时短路返回原列表",
+               len(kept6) == 2,
+               "None/None → 原样返回（推理阶段的 0.35 已承担过滤）")
 
     finally:
         main_mod.task_manager = saved_tm
