@@ -21,6 +21,7 @@
      BUG-14 手套错归：伸出框外的手被"精确包含优先"判给旁人（成对先验修复）
      BUG-15 成对先验副作用：相邻两人的手套全被先绑者吸走（满额上限 2 只修复）
      BUG-16 手套中心压 person 框缘 0.02px → 无精确命中时按重叠占比消歧
+     BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -463,6 +464,40 @@ def main():
         report("重叠占比规则双向有效（对照组）",
                "gloves" in w7.ppe and "gloves" not in u7.ppe,
                f"大框={sorted(u7.ppe)}，右女={sorted(w7.ppe)}")
+
+        # ============ BUG-17：按类阈值（person 单独放宽） ============
+        # img_9491b9ea：重叠人群里真人 conf 被联合框压低（中男 0.290），
+        # 而 PPE 类不能跟着降阈值（右女会被塞假 mask 0.339，把"严重违规"
+        # 洗成"一般违规"）。方案 C：person 用 conf_person，其余类用 conf。
+        print("--- BUG-17 按类阈值收口（person 单独放宽） ---")
+        from ai.detector import PPEDetector as _PPED
+
+        p_low = _mk2("person", 0.290, 1721, 1253, 2847, 3306)   # 真人（低置信）
+        p_ok = _mk2("person", 0.820, 3022, 1484, 4191, 3148)    # 真人（高置信）
+        m_fake = _mk2("mask", 0.339, 3282, 2012, 3532, 2154)    # PPE 假阳性
+
+        kept = _PPED._apply_class_thresholds([p_low, p_ok, m_fake], 0.35, 0.28)
+        names = sorted(d.cls_name for d in kept)
+        report("person 按独立阈值保留，PPE 类维持原阈值",
+               names == ["person", "person"],
+               f"0.35/0.28 收口后保留 {names}"
+               "（低置信真人 0.290 保留；假 mask 0.339 被 0.35 挡掉）")
+
+        # 守卫：conf_person 为 None 时短路（阈值已由上层 predict 承担，
+        # 此处不再二次过滤，避免改变旧行为）
+        kept2 = _PPED._apply_class_thresholds([p_low, p_ok, m_fake], 0.35, None)
+        names2 = sorted(d.cls_name for d in kept2)
+        report("未配置 conf_person 时不二次过滤（旧行为短路）",
+               names2 == ["mask", "person", "person"],
+               f"None → 原样返回 {names2}（真实流程里低置信框已被 predict 的 0.35 挡掉）")
+
+        # 边界：conf_person 高于 conf 时也不应误挡 PPE（各自独立判断）
+        m_ok = _mk2("mask", 0.45, 3282, 2012, 3532, 2154)      # 高于 0.35 的 PPE
+        kept3 = _PPED._apply_class_thresholds([p_low, p_ok, m_ok], 0.35, 0.90)
+        names3 = sorted(d.cls_name for d in kept3)
+        report("conf_person 与 conf 相互独立",
+               names3 == ["mask"],
+               f"0.35/0.90 → 保留 {names3}（person 被 0.90 挡、mask 0.45 按 0.35 保留）")
 
     finally:
         main_mod.task_manager = saved_tm

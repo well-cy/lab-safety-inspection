@@ -113,6 +113,20 @@ class Config:
         # ---------- 检测（模型推理） ----------
         # 置信度阈值：低于该值的检测框丢弃
         self.CONF_THRESHOLD = _env_float("CONF_THRESHOLD", 0.35)
+        # person 类的独立阈值（2026-10-14 方案 C，见 docs/E5_11）。
+        # 重叠/遮挡人群场景下，真人的置信度常被 YOLO 的"联合框"压低
+        # （实测 img_9491b9ea 中间男生仅 0.290 → 3 人只检出 2 人），
+        # 而 PPE 类一旦跟着降阈值会引入假阳性（同图右女被塞假 mask 0.339，
+        # 把"严重违规"洗成"一般违规"）。故只对 person 放宽。
+        #
+        # 取值 0.28 的依据（实测两案例夹逼）：
+        #   要救的真人之最低 conf = 0.290（img_9491b9ea 中男）
+        #   不想要的低置信框之最高 conf = 0.274（img_8e909ac5 遮挡半身，
+        #     检出后 PPE 全空 → 会凭空多一条"三项全违规"假阳性）
+        # 0.28 落在两者之间：救回真人且不引入假阳性。
+        # ⚠️ 注意此值贴近实测样本，若有新的漏检/误报样本需重新标定。
+        # 设为与 CONF_THRESHOLD 相同即恢复旧行为。
+        self.CONF_PERSON = _env_float("CONF_PERSON", 0.28)
         # "auto" = 有 CUDA 用 GPU，否则 CPU；也可显式指定 "cpu" / 0 / 1
         self.DEVICE = _env_str("DEVICE", "auto")
 
@@ -175,6 +189,7 @@ class Config:
             "video_dir": str(self.VIDEO_DIR),
             "screenshot_dir": str(self.SCREENSHOT_DIR),
             "conf_threshold": self.CONF_THRESHOLD,
+            "conf_person": self.CONF_PERSON,
             "device": self.DEVICE,
             "video_stride": self.VIDEO_STRIDE,
             "violation_cooldown_s": self.VIOLATION_COOLDOWN_S,

@@ -206,11 +206,16 @@ class PPEDetector:
     """YOLO PPE 检测器"""
 
     def __init__(self, weights: str, conf_threshold: float = 0.35, device: str = "auto",
-                 imgsz: int = 640):
+                 imgsz: int = 640, conf_person: float | None = None):
         from ultralytics import YOLO  # 延迟导入，加快模块加载
         self.weights_path = str(weights)
         self.model = YOLO(self.weights_path)
         self.conf_threshold = conf_threshold
+        # person 单独阈值（2026-10-14 方案 C）：重叠/遮挡人群里真人的置信度
+        # 常被联合框压低（实测 img_9491b9ea 中男 0.290），而 PPE 类降阈值会
+        # 引入假阳性（右女被塞假 mask 0.339）。故只对 person 放宽。
+        # None = 与 conf_threshold 一致（旧行为）。
+        self.conf_person = conf_person
         self.imgsz = imgsz
         if device == "auto":
             import torch
@@ -228,8 +233,24 @@ class PPEDetector:
             return torch.cuda.get_device_name(self.device)
         return str(self.device)
 
+    @staticmethod
+    def _apply_class_thresholds(dets: list[Detection], conf: float,
+                                conf_person: float | None) -> list[Detection]:
+        """按类收口：person 用 conf_person，其余类用 conf（2026-10-14 方案 C）。
+
+        推理阶段统一用 min(conf, conf_person) 低阈值跑（保证不漏），
+        最后在这里按类过滤。必须放在**所有**检测来源（全图双尺度 + 切片复检）
+        汇总之后——切片复检同样会产出低置信 PPE 假阳性
+        （img_9491b9ea 的假 mask 0.339 就是切片产物）。
+        """
+        if conf_person is None or conf_person == conf:
+            return dets
+        return [d for d in dets
+                if d.conf >= (conf_person if d.cls_name == "person" else conf)]
+
     def detect(self, frame: np.ndarray, conf: float | None = None,
-               tile_recheck: bool = False) -> list[Detection]:
+               tile_recheck: bool = False,
+               conf_person: float | None = None) -> list[Detection]:
         """对单帧图像（BGR ndarray）执行检测，返回业务类别 Detection 列表
 
         双尺度：imgsz 与 640 不同时，两个尺度各推理一次取并集（不同目标
@@ -237,12 +258,18 @@ class PPEDetector:
         面具在 640 更稳）。
         tile_recheck：额外做 2×2 带重叠切片复检（大幅提升小目标召回，
         如正面透明护目镜），代价是推理耗时约 ×2.5，仅建议图片模式开启。
+        conf_person：person 类的独立阈值（None=沿用 conf）。用于重叠人群
+        场景放宽真人检出，同时不让 PPE 类跟着降阈值引入假阳性。
         """
+        base_conf = conf or self.conf_threshold
+        p_conf = conf_person if conf_person is not None else self.conf_person
+        # 推理统一用最低阈值，最后按类收口
+        low = min(base_conf, p_conf) if p_conf is not None else base_conf
         scales = sorted({640, self.imgsz})
         detections: list[Detection] = []
         for sz in scales:
             results = self.model.predict(
-                frame, conf=conf or self.conf_threshold, device=self.device,
+                frame, conf=low, device=self.device,
                 verbose=False, imgsz=sz,
                 iou=0.5,  # 收紧 NMS：默认 0.7 会保留"套住多人"的联合框
             )
@@ -267,9 +294,10 @@ class PPEDetector:
         # 否则底部鞋子等全图误检会错误地"支持"切片手套准入（②img_ed8a1e3e 连锁误检）
         detections = self._filter_implausible(detections, frame)
         if tile_recheck:
-            detections += self._tile_detect(frame, conf, full_dets=detections)
+            detections += self._tile_detect(frame, low, full_dets=detections)
         merged = self._nms_merge(detections) if (len(scales) > 1 or tile_recheck) else detections
-        return self._filter_implausible(merged, frame)
+        merged = self._filter_implausible(merged, frame)
+        return self._apply_class_thresholds(merged, base_conf, p_conf)
 
     # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 20%
     # （白大褂袖子/衣料被误认成手套时框可达画面 25%~33%：特写构图 33%、

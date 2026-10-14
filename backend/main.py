@@ -104,9 +104,12 @@ def get_pipeline():
                 from video.processor import InspectionPipeline
                 from rule_engine.engine import SafetyRuleEngine
                 # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
+                # conf_person：person 类单独阈值（重叠人群中放宽真人检出，
+                # 不让 PPE 类跟着降阈值引入假阳性）—— 见 docs/E5_11
                 _detector = PPEDetector(MODEL_PATH,
                                         conf_threshold=config.CONF_THRESHOLD,
-                                        device=config.DEVICE)
+                                        device=config.DEVICE,
+                                        conf_person=config.CONF_PERSON)
                 _pipeline = InspectionPipeline(
                     detector=_detector,
                     engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
