@@ -19,6 +19,7 @@
      BUG-12 画面底部的真手被"鞋/脚误检"规则无差别误杀
      BUG-13 切片复检的高包含率重复框逃逸（IoU 不够但 100% 被包含）
      BUG-14 手套错归：伸出框外的手被"精确包含优先"判给旁人（成对先验修复）
+     BUG-15 成对先验副作用：相邻两人的手套全被先绑者吸走（满额上限 2 只修复）
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -399,6 +400,38 @@ def main():
         report("无成对先验时不越权抢人（对照组）",
                "gloves" in right3.ppe and "gloves" not in mid3.ppe,
                f"中男={sorted(mid3.ppe)}，右女={sorted(right3.ppe)}")
+
+        # ============ BUG-15：手套满额守卫（每人上限 2 只） ============
+        # img_cb869a2c 复刻：两人相邻，女2 的两只手套都落在与男1 框的交界
+        # 重叠区内。BUG-14 的成对先验让男1 每轮胜出 → 女2 两只全被吸走再被
+        # 同类覆盖丢弃，网页表现为"只有 1 人戴手套"。
+        # 手套是成对器官 → 已绑满 2 只的人必须退出竞争。
+        print("--- BUG-15 手套满额守卫（每人上限 2 只） ---")
+        from ai.ppe_matcher import match_person_ppe as _match3
+
+        p_a = _mk2("person", 0.84, 686, 15, 1003, 643)    # 男1（左，大框）
+        p_b = _mk2("person", 0.82, 975, 22, 1180, 644)    # 女2（右，小框）
+        g1 = _mk2("gloves", 0.87, 777, 199, 838, 263)     # 男1 手 A（框内）
+        g2 = _mk2("gloves", 0.81, 862, 300, 943, 351)     # 男1 手 B（框内）
+        g3 = _mk2("gloves", 0.79, 964, 382, 1013, 447)    # 女2 手 A（交界，两人框内）
+        g4 = _mk2("gloves", 0.67, 978, 430, 1047, 484)    # 女2 手 B（交界偏女2）
+
+        sts4 = _match3([p_a, p_b, g1, g2, g3, g4])
+        a = [s for s in sts4 if abs(s.bbox.area - p_a.area) < 1e-6][0]
+        b = [s for s in sts4 if abs(s.bbox.area - p_b.area) < 1e-6][0]
+        report("两人都戴手套时各自归属（满额守卫）",
+               "gloves" in a.ppe and "gloves" in b.ppe,
+               f"男1={sorted(a.ppe)}，女2={sorted(b.ppe)}"
+               "（修复前女2 的两只手套被成对先验全部吸走）")
+
+        # 守卫不误伤：3 只手套、两人相邻时，第 3 只按普通规则走（不凭空消失）
+        sts5 = _match3([p_a, p_b, g1, g3, g4])
+        a5 = [s for s in sts5 if abs(s.bbox.area - p_a.area) < 1e-6][0]
+        b5 = [s for s in sts5 if abs(s.bbox.area - p_b.area) < 1e-6][0]
+        n_g = (1 if "gloves" in a5.ppe else 0) + (1 if "gloves" in b5.ppe else 0)
+        report("未满额时先验照常生效",
+               n_g == 2,
+               f"男1={sorted(a5.ppe)}，女2={sorted(b5.ppe)}（2 人共绑定 {n_g} 只）")
 
     finally:
         main_mod.task_manager = saved_tm

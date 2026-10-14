@@ -215,7 +215,18 @@ def match_person_ppe(detections: list[Detection],
         "coverall": (0.05, 0.92),
     }
 
+    # 手套是成对器官：每人最多绑定 2 只（含被更高置信同类框覆盖丢弃的）。
+    # 满额后此人退出手套竞争，防止"成对先验"连环抢走旁人的手套。
+    # （img_cb869a2c：女2 的两只手套都落在与男1 框的交界重叠区内，男1 先绑到
+    #   手套后 sibling 先验每轮胜出 → 女2 两只全被吸走再被同类覆盖丢弃。）
+    # 虚拟聚合人员（4 类模型无 person 框）不受限：全帧手套本就都属于它。
+    glove_taken: dict[int, int] = {}
+
     def _cand(st):
+        # ⑤ 手套满额守卫：已有 2 只 → 不再参与手套归属
+        if (ppe.cls_name == "gloves" and not st.virtual
+                and glove_taken.get(id(st), 0) >= 2):
+            return None
         """返回 (空间命中, 精确包含, 解剖学合理, 已有同类PPE, st)"""
         b = st.bbox
         w, h = b.x2 - b.x1, b.y2 - b.y1
@@ -241,14 +252,20 @@ def match_person_ppe(detections: list[Detection],
     # 避免同目标的低置信重复框抢在真框之前把它绑给别人。
     ordered = sorted(ppes, key=lambda d: -d.conf)
 
+    # 手套是成对器官：每人最多绑定 2 只（含已被更高置信框覆盖而丢弃的）。
+    # 满额后此人退出手套竞争，防止"成对先验"连环抢走旁人的手套。
+    # （img_cb869a2c：女2 的两只手套都落在与男1 框的交界重叠区内，
+    #   男1 先绑到手套后 sibling 先验每轮胜出 → 女2 两只全被吸走再被丢弃。）
+    # 虚拟聚合人员（4 类模型无 person 框）不受限：全帧手套本就属于它。
+    glove_taken: dict[int, int] = {}
+
     for ppe in ordered:
         px, py = ppe.center
         owner = None
-        # 统一候选集：中心落在 person 框内（规则1）或 40% 扩张框内（规则2）。
+        # 统一候选集：中心落在 person 框内（规则1）或 40% 扩张框内（规则2），
+        # 返回 None 的是被守卫淘汰的（手套满额）。
         # 优先级：手套已有同类（成对先验） > 解剖学合理 > 精确包含 > 面积最小。
-        # （旧逻辑分两步且"面积最小"优先，导致坐姿人员的 PPE 被
-        #   重叠的站立者小框整体抢走。）
-        cands = [c for c in (_cand(st) for st in states) if c[0]]
+        cands = [c for c in (_cand(st) for st in states) if c is not None]
         if cands:
             best = max(cands, key=lambda c: (c[3], c[2], c[1], -c[4].bbox.area))
             owner = best[4]
@@ -265,4 +282,7 @@ def match_person_ppe(detections: list[Detection],
             old = owner.ppe.get(ppe.cls_name)
             if old is None or ppe.conf > old.conf:
                 owner.ppe[ppe.cls_name] = ppe
+            # 无论框是否被保留，这个人的手套名额都已被占用
+            if ppe.cls_name == "gloves":
+                glove_taken[id(owner)] = glove_taken.get(id(owner), 0) + 1
     return states
