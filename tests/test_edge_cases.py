@@ -22,7 +22,7 @@
      BUG-15 成对先验副作用：相邻两人的手套全被先绑者吸走（满额上限 2 只修复）
      BUG-16 手套中心压 person 框缘 0.02px → 无精确命中时按重叠占比消歧
      BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
-     BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.50）
+     BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.44）
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -503,20 +503,22 @@ def main():
         # ============ BUG-18：goggles 按类阈值收紧（普通眼镜误判护目镜） ============
         # img_169f81a5：中间男士戴普通近视镜，模型判成护目镜（conf 0.389 >
         # 全局 0.35 → 凭空多出"佩戴护目镜"）；右侧女生眼镜 0.251 险过。
-        # 实测真护目镜 conf 全部 ≥ 0.70 → 夹逼取 0.50 收紧 goggles。
+        # 实测：假 ≤0.389、真 ≥0.497（img_9a04e15b，首版 0.50 曾把它漏掉），
+        # → 夹逼取 0.44（唯一可行区间 0.39~0.49 的中点）。
         print("--- BUG-18 goggles 按类阈值收紧（普通眼镜假阳性） ---")
 
         g_fake = _mk2("goggles", 0.389, 2414, 453, 2927, 722)  # 近视镜误检
+        g_edge = _mk2("goggles", 0.497, 308, 90, 518, 157)     # 真护目镜（0.50 曾漏掉）
         g_real = _mk2("goggles", 0.703, 1076, 1097, 1760, 1623)  # 真护目镜
         m_std = _mk2("mask", 0.40, 500, 500, 700, 600)          # 普通 PPE 对照
 
-        kept4 = _PPED._apply_class_thresholds([g_fake, g_real, m_std],
-                                              0.35, 0.28, 0.50)
+        kept4 = _PPED._apply_class_thresholds([g_fake, g_edge, g_real, m_std],
+                                              0.35, 0.28, 0.44)
         names4 = sorted(d.cls_name for d in kept4)
-        report("goggles 按 0.50 收口，真护目镜保留、眼镜误检被挡",
-               names4 == ["goggles", "mask"],
-               f"0.35/0.28/0.50 收口后保留 {names4}"
-               "（假 goggles 0.389 被挡、真 goggles 0.703 保留）")
+        report("goggles 按 0.44 收口：眼镜误检被挡、两真护目镜保留",
+               names4 == ["goggles", "goggles", "mask"],
+               f"0.35/0.28/0.44 收口后保留 {names4}"
+               "（假 goggles 0.389 被挡；0.497/0.703 保留——0.44 是唯一可行区间中点）")
 
         # 独立性：未配置 conf_goggles 时 goggles 仍按全局 conf 判断
         kept5 = _PPED._apply_class_thresholds([g_fake, g_real], 0.35, 0.28, None)
