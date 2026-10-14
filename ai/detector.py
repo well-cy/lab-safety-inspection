@@ -123,6 +123,21 @@ def _iou(a, b) -> float:
     return inter / (area_a + area_b - inter)
 
 
+def _containment(a, b) -> float:
+    """包含率 = 交集面积 / 较小框面积（0~1）。
+
+    与 IoU 的区别：大框套小框时 IoU 会被大框的"额外面积"稀释
+    （小框 100% 在大框内但 IoU 可能仅 0.45），包含率则恒为 1.0。
+    用于识别「同一切片复检产生的一大一小重复框」。
+    """
+    iw = min(a.x2, b.x2) - max(a.x1, b.x1)
+    ih = min(a.y2, b.y2) - max(a.y1, b.y1)
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    smaller = min((a.x2 - a.x1) * (a.y2 - a.y1), (b.x2 - b.x1) * (b.y2 - b.y1))
+    return (iw * ih) / smaller if smaller > 0 else 0.0
+
+
 class PersonDetector:
     """COCO 预训练人员检测器（person 类锚点）
 
@@ -436,7 +451,9 @@ class PPEDetector:
         return float(skin.mean())
 
     @staticmethod
-    def _nms_merge(detections: list[Detection], iou_thr: float = 0.55) -> list[Detection]:
+    def _nms_merge(detections: list[Detection], iou_thr: float = 0.55,
+                   contain_iou: float = 0.40,
+                   contain_ratio: float = 0.85) -> list[Detection]:
         """类内贪心 NMS：合并多尺度重复框，保留高置信度。
 
         ⚠️ 必须**按类别各自独立**做抑制（2026-10-12 修复）。
@@ -450,17 +467,39 @@ class PPEDetector:
         更隐蔽的是外层 `for cls in {d.cls_name ...}` 遍历字符串集合，
         集合迭代顺序受 PYTHONHASHSEED 随机化影响 → **谁抑制谁每次重启都变**，
         表现为「有时人少一个、有时白大褂少一个」的幽灵 bug。
+
+        ⚠️ 2026-10-14 增补「高包含率合并」（PPE 类专用）。
+        切片复检会产出**一大一小**的同类重复框：小框几乎完全落在高置信框
+        内，但 IoU 只有 0.4~0.55，躲过常规 NMS，随后被误绑到另一个人身上。
+        实测 img_8e909ac5（实验室 4 人）：同一只右手 0.719(3347,1323,3795,1705)
+        与 0.389(3515,1411,3791,1692)，IoU≈0.45 / **包含率 100%** →
+        0.389 逃逸后被归属给了旁边的女生，网页显示「她戴了手套」。
+        故对 PPE 类追加：IoU ≥0.40 且包含率 ≥0.85 → 同一目标，丢弃低置信者。
+
+        person 类**不做**包含合并：真人前后站位时，后排只露半身的小框会
+        100% 落在前排大框内（这是两个真人，不是重复框），交由
+        `_dedup_persons` 中带 PPE 豁免的精细化判定处理。
         """
         merged: list[Detection] = []
         by_cls: dict[str, list[Detection]] = {}
         for d in detections:
             by_cls.setdefault(d.cls_name, []).append(d)
-        for group in by_cls.values():          # 每类一个独立 kept 列表
+        for cls, group in by_cls.items():      # 每类一个独立 kept 列表
+            allow_contain = cls != "person"
             group = sorted(group, key=lambda d: -d.conf)
             kept: list[Detection] = []
             for d in group:
-                if any(_iou(d, m) > iou_thr for m in kept):
-                    continue                    # 只与同类比较
+                dup = False
+                for m in kept:
+                    if _iou(d, m) > iou_thr:          # 常规类内 NMS
+                        dup = True
+                        break
+                    if allow_contain and _iou(d, m) >= contain_iou \
+                            and _containment(d, m) >= contain_ratio:
+                        dup = True                     # 高包含率重复框（切片复检）
+                        break
+                if dup:
+                    continue                           # 只与同类比较
                 kept.append(d)
             merged.extend(kept)
         merged.sort(key=lambda d: -d.conf)

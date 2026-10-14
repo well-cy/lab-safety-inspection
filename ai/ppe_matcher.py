@@ -216,7 +216,7 @@ def match_person_ppe(detections: list[Detection],
     }
 
     def _cand(st):
-        """返回 (exact中心在框内, plausible解剖学合理, st)"""
+        """返回 (空间命中, 精确包含, 解剖学合理, 已有同类PPE, st)"""
         b = st.bbox
         w, h = b.x2 - b.x1, b.y2 - b.y1
         exact = b.x1 <= px <= b.x2 and b.y1 <= py <= b.y2
@@ -225,19 +225,33 @@ def match_person_ppe(detections: list[Detection],
         lo, hi = _PPE_BAND.get(ppe.cls_name, (0.0, 1.0))
         rel = (py - b.y1) / h if h > 0 else 0.5
         plausible = lo <= rel <= hi
-        return (exact or expanded), exact, plausible, st
+        # ④ 手套"成对先验"：该人已绑定同类 PPE（已检出一只手套）→ 强归属信号。
+        # 手套在实验室是成对使用的；已有一只的人伸出的另一只手，比"框外伸手
+        # 恰好落进旁人精确框"更可信。
+        # （img_8e909ac5：中间男的右手伸到右边女生的框内，旧逻辑"精确包含优先"
+        #   把它判给女生；他的左手已先行归属本人，故此处应让本人胜出。）
+        # 守卫：不与已绑定的手套框高度重叠（IoU≥0.5 视为同一只手的重复框，
+        #       此时不构成"第二只手"证据，交由普通规则处理）。
+        sibling = False
+        if ppe.cls_name == "gloves" and "gloves" in st.ppe:
+            sibling = _iou(ppe, st.ppe["gloves"]) < 0.5
+        return (exact or expanded), exact, plausible, sibling, st
 
-    for ppe in ppes:
+    # PPE 按置信度降序归属：保证"先到先得"落在这只手上置信度最高的那个框，
+    # 避免同目标的低置信重复框抢在真框之前把它绑给别人。
+    ordered = sorted(ppes, key=lambda d: -d.conf)
+
+    for ppe in ordered:
         px, py = ppe.center
         owner = None
         # 统一候选集：中心落在 person 框内（规则1）或 40% 扩张框内（规则2）。
-        # 优先级：解剖学合理 > 精确包含 > 面积最小。
+        # 优先级：手套已有同类（成对先验） > 解剖学合理 > 精确包含 > 面积最小。
         # （旧逻辑分两步且"面积最小"优先，导致坐姿人员的 PPE 被
         #   重叠的站立者小框整体抢走。）
         cands = [c for c in (_cand(st) for st in states) if c[0]]
         if cands:
-            best = max(cands, key=lambda c: (c[2], c[1], -c[3].bbox.area))
-            owner = best[3]
+            best = max(cands, key=lambda c: (c[3], c[2], c[1], -c[4].bbox.area))
+            owner = best[4]
         # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）
         if owner is None and states:
             def dist(st):

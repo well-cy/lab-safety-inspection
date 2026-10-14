@@ -12,6 +12,14 @@
      BUG-7  vtype 筛选用 LIKE 但未转义通配符 —— 传 % 或 _ 会返回**全部**记录
      BUG-8  后台任务队列无上限，可被无限提交堆积（内存 + 磁盘）
 
+后续补充（均为网页实测报图的回归守卫）：
+     BUG-9  跨类 NMS 抑制穿白大褂的人（"不管多少人都只显示一个人"）
+     BUG-10 倒影过滤器误杀"长在身上的真手套"
+     BUG-11 坐姿者 PPE 被重叠站立者小框整体抢走
+     BUG-12 画面底部的真手被"鞋/脚误检"规则无差别误杀
+     BUG-13 切片复检的高包含率重复框逃逸（IoU 不够但 100% 被包含）
+     BUG-14 手套错归：伸出框外的手被"精确包含优先"判给旁人（成对先验修复）
+
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
 import io
@@ -330,6 +338,67 @@ def main():
         report("与人体无重叠的底部手套仍被过滤（鞋/脚）",
                not any(d.cls_name == "gloves" for d in kept2),
                "person 框在手套上方结束 → 底部手套判鞋/脚剔除")
+
+        # ============ BUG-13：切片复检产生的「高包含率重复框」逃逸 ============
+        # img_8e909ac5 实测：同一只右手产出 0.719(3347,1323,3795,1705) 与
+        # 0.389(3515,1411,3791,1692) 两个框，IoU≈0.45 < 0.55（常规 NMS 阈值）
+        # 但包含率 100% → 0.389 逃逸，随后被归属给旁边的女生，
+        # 网页显示「她戴了手套」（用户报的「只有一人戴手套却归属给两人」）。
+        # 修复：PPE 类追加「IoU≥0.40 且包含率≥0.85 即合并」。
+        print("--- BUG-13 高包含率重复框合并（PPE 类） ---")
+        from ai.detector import Detection, PPEDetector as _PPE4
+
+        g_big = _mk2("gloves", 0.719, 3347, 1323, 3795, 1705)
+        g_small = _mk2("gloves", 0.389, 3515, 1411, 3791, 1692)   # 100% 被大框包含
+        m_out = _PPE4._nms_merge([g_big, g_small])
+        report("同目标的高包含率重复框被合并（保留高置信）",
+               len(m_out) == 1 and abs(m_out[0].conf - 0.719) < 1e-6,
+               f"2 框（IoU≈0.45 / 包含率 100%）→ {len(m_out)} 框，"
+               f"conf={[round(d.conf, 3) for d in m_out]}")
+
+        # 对照①：错位重叠（真的是两只手）的手套框不应被合并
+        g_a = _mk2("gloves", 0.70, 100, 100, 300, 300)
+        g_b = _mk2("gloves", 0.60, 200, 200, 400, 400)   # IoU≈0.14、包含率 25%
+        m_out2 = _PPE4._nms_merge([g_a, g_b])
+        report("错位重叠的两只手套不误合并",
+               len(m_out2) == 2, f"IoU≈0.14 → {len(m_out2)} 框")
+
+        # 对照②：person 类不做包含合并（真人前后站位，后排只露半身，
+        #        其小框 100% 落在前排大框内，但这是两个真人）
+        p_big = _mk2("person", 0.90, 0, 0, 400, 250)
+        p_small = _mk2("person", 0.80, 50, 50, 350, 200)  # 完全在内、IoU≈0.45
+        m_out3 = _PPE4._nms_merge([p_big, p_small])
+        report("person 前后站位不被包含合并（真人不是重复框）",
+               len(m_out3) == 2,
+               f"小 person 框 100% 落在大框内（IoU≈0.45）→ 仍保留 {len(m_out3)} 人")
+
+        # ============ BUG-14：手套「成对先验」修错归 ============
+        # img_8e909ac5 复刻：中间男的右手伸出自己框外、落进右边女生的框内，
+        # 旧逻辑「精确包含优先」把这只手判给女生（她因此凭空多出一只手套）。
+        # 中男的左手已先行归属本人 → 成对先验应让本人胜出。
+        print("--- BUG-14 手套成对先验（伸出框外的手归本人） ---")
+        from ai.ppe_matcher import match_person_ppe as _match2
+
+        p_mid = _mk2("person", 0.78, 1963, 237, 3507, 2527)     # 中男（大框）
+        p_right = _mk2("person", 0.83, 3270, 925, 4201, 2156)   # 右女（小框）
+        g_left = _mk2("gloves", 0.795, 3003, 1637, 3514, 1875)  # 中男左手（框内）
+        g_hand = _mk2("gloves", 0.719, 3347, 1323, 3795, 1705)  # 中男右手（伸进右女框）
+
+        sts2 = _match2([p_mid, p_right, g_left, g_hand])
+        mid = [s for s in sts2 if abs(s.bbox.area - p_mid.area) < 1e-6][0]
+        right = [s for s in sts2 if abs(s.bbox.area - p_right.area) < 1e-6][0]
+        report("伸出框外的手归本人（成对先验）",
+               "gloves" in mid.ppe and "gloves" not in right.ppe,
+               f"中男={sorted(mid.ppe)}，右女={sorted(right.ppe)}"
+               "（修复前右女会被凭空赋予手套）")
+
+        # 对照：中男自己没有任何手套检出时，不应越权抢右女框内的手套
+        sts3 = _match2([p_mid, p_right, g_hand])
+        mid3 = [s for s in sts3 if abs(s.bbox.area - p_mid.area) < 1e-6][0]
+        right3 = [s for s in sts3 if abs(s.bbox.area - p_right.area) < 1e-6][0]
+        report("无成对先验时不越权抢人（对照组）",
+               "gloves" in right3.ppe and "gloves" not in mid3.ppe,
+               f"中男={sorted(mid3.ppe)}，右女={sorted(right3.ppe)}")
 
     finally:
         main_mod.task_manager = saved_tm
