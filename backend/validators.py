@@ -68,3 +68,30 @@ def validate_lab_text(name: str, description: str) -> None:
         if any(unicodedata.category(char) == "Cc" and char not in allowed_controls
                for char in value):
             raise ValueError(f"{label}包含不支持的控制字符")
+
+
+def validate_video_file(path) -> None:
+    """按内容识别支持的视频容器并试解码，不信任扩展名或 MIME。"""
+    import cv2
+
+    message = "不是有效的视频文件，请上传 MP4/MOV、AVI 或 MKV/WebM 视频"
+    with open(path, "rb") as stream:
+        header = stream.read(64)
+    # ISO BMFF 的图片格式（HEIF/AVIF）也有 ftyp，不能只判断 ftyp。
+    bmff = (header[4:8] == b"ftyp" and header[8:12] in
+            (b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41",
+             b"mp42", b"avc1", b"M4V ", b"MSNV", b"qt  ", b"3gp4",
+             b"3gp5", b"3gp6"))
+    avi = header[:4] == b"RIFF" and header[8:12] == b"AVI "
+    matroska = header[:4] == b"\x1a\x45\xdf\xa3"
+    # 旧 QuickTime 文件可能没有 ftyp。
+    quicktime = header[4:8] in (b"moov", b"mdat", b"wide")
+    if not (bmff or avi or matroska or quicktime):
+        raise ValueError(message)
+    capture = cv2.VideoCapture(str(path))
+    try:
+        ok, frame = capture.read() if capture.isOpened() else (False, None)
+        if not ok or frame is None:
+            raise ValueError(message)
+    finally:
+        capture.release()

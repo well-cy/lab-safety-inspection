@@ -306,3 +306,21 @@ Query 参数（全部可选）：
 | 5 | settings 裸 SQL 绕过 database 层 | main.py:188-241 | 后端成员收敛 |
 | 6 | area 坐标无 0~1 校验 | main.py:216 | 后端成员补校验 |
 | 7 | person_id 帧内编号、无 tracking | ppe_matcher | 明确暂不做（PROJECT_STATUS） |
+
+
+### 后端增补：视频内容校验与实验室维护（BUG-008 / BUG-009）
+
+- `POST /api/detect/video`、`POST /api/detect/video/async` 在处理/入队前
+  检查上传文件的真实容器格式和首帧可解码性。支持 MP4/MOV、AVI、MKV/WebM。
+  图片改后缀、空文件、不支持的容器或无法解码的视频返回 HTTP 400
+  `{"error": "..."}`；无效上传暂存文件被删除，不创建后台任务或检测记录。
+  不依赖客户端 MIME；合法的单帧视频仍可接受。异步校验失败直接返回 400，
+  不是先返回 202 再变成 failed。
+- `PUT /api/settings/lab/{lab_id}`：Form `name`（必填）、`description`（默认空串）。
+  完整替换名称/说明，复用新建的文本校验；成功返回 `{"ok": true}`。
+  空白、超长、控制字符、编码替换字符、重名返回 400；不存在返回 404。
+  保持实验室 ID、区域和历史记录不变。
+- `DELETE /api/settings/lab/{lab_id}`：仅可删除无关联区域、检测记录、事件的实验室。
+  成功返回 `{"ok": true}`；存在关联数据返回 400 和可读说明；不存在返回 404。
+  关联检查和删除在同一个写事务内完成，不级联删除历史证据。
+- 本次仅交付后端接口，前端编辑/删除入口由前端另行接入。

@@ -410,6 +410,39 @@ def create_lab(name: str, description: str = "") -> int:
         conn.close()
 
 
+def update_lab(lab_id: int, name: str, description: str = "") -> bool:
+    """修改实验室；保持 ID 和所有历史关联不变，不存在时返回 False。"""
+    conn = get_conn()
+    try:
+        with conn:
+            cur = conn.execute(
+                "UPDATE laboratories SET name=?, description=? WHERE id=?",
+                (name, description, lab_id))
+            return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_lab(lab_id: int) -> bool:
+    """仅删除无关联数据的实验室；检查与删除持有同一个写事务。"""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM laboratories WHERE id=?", (lab_id,)).fetchone():
+                return False
+            for table, label in (("areas", "区域"), ("detection_records", "检测记录"),
+                                 ("violation_events", "事件记录")):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE lab_id=?",
+                                     (lab_id,)).fetchone()[0]
+                if count:
+                    raise ValueError(f"该实验室下仍有 {count} 条{label}，不能删除，请先处理关联数据")
+            conn.execute("DELETE FROM laboratories WHERE id=?", (lab_id,))
+            return True
+    finally:
+        conn.close()
+
+
 def create_area(lab_id: int, name: str, x1: float, y1: float, x2: float,
                 y2: float, required_ppe: list) -> int:
     """
