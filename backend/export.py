@@ -2,8 +2,9 @@
 """
 违规记录导出模块（独立文件）。
 
-前端契约来源：backend/static/export.js（成员 5 已写好的占位文件）
-    GET /api/export/violations?fmt=csv|xlsx&date_from=&date_to=&severity=&ppe_type=
+前端入口：backend/static/export.js（成员 5 实现，动态渲染到 index.html 的 <div id="export-panel">）
+    GET /api/export/violations?fmt=csv|xlsx&date_from=&date_to=&severity=&ppe_type=&lab_id=&sort=&order=
+    GET /api/export/violations/count?date_from=&date_to=&severity=&ppe_type=&lab_id=   ← 导出前条数预览
 
 设计约定：
 - 只**新增**端点，不改动既有 GET /api/violations 的路径与响应字段
@@ -11,6 +12,7 @@
   "导出的"完全一致（同一次筛选不会导出不同结果）
 - CSV 用 utf-8-sig（带 BOM）编码，Excel 双击打开中文不乱码
 - 导出文件名保持纯 ASCII（规避中文路径在部分环境下的问题）
+- xlsx 依赖 openpyxl：缺失时返回 503 + 中文说明，**不再抛 500 裸错**
 
 为什么要独立成文件：
     docs/PROJECT_FRAMEWORK_GUIDE.md 第 5 节要求"独立功能必须有独立文件"，
@@ -47,6 +49,53 @@ MAX_EXPORT_ROWS = 50000
 XLSX_MEDIA_TYPE = ("application/vnd.openxmlformats-officedocument"
                    ".spreadsheetml.sheet")
 
+# 严重程度取值（供 /count 返回给前端做下拉提示，与 rule_engine 常量保持一致）
+SEVERITY_CHOICES = ["一般违规", "严重违规"]
+
+
+# ==========================================================
+# 依赖可用性
+# ==========================================================
+def xlsx_available() -> bool:
+    """检测 Excel 导出依赖 openpyxl 是否可用（缺失时降级为友好提示）。"""
+    try:
+        import openpyxl  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# ==========================================================
+# 筛选参数校验（两个端点共用，保证口径完全一致）
+# ==========================================================
+def _resolve_filters(date_from, date_to, ppe_type, vtype):
+    """
+    校验日期参数并解析关键词。
+
+    返回 (error_response, keyword)：
+    - 校验通过：error_response 为 None，keyword 为待模糊匹配的违规类型
+    - 校验失败：error_response 为 400 JSONResponse，keyword 为 None
+    """
+    keyword = ppe_type or vtype
+
+    # 日期校验：格式与真实性都检查，统一返回 400 + error 字段
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if not is_valid_date(value):
+            return JSONResponse(
+                {"error": f"{label} 不是有效日期：{value}（应为 YYYY-MM-DD）"},
+                status_code=400), None
+
+    if date_from and date_to and date_from > date_to:
+        return JSONResponse(
+            {"error": f"日期区间无效：起始 {date_from} 晚于结束 {date_to}"},
+            status_code=400), None
+
+    return None, keyword
+
+
+# ==========================================================
+# 文件生成
+# ==========================================================
 def _build_csv(rows: list) -> bytes:
     """生成 CSV 字节流（utf-8-sig 带 BOM，Excel 打开中文不乱码）"""
     buf = io.StringIO(newline="")
@@ -88,6 +137,40 @@ def _build_xlsx(rows: list) -> bytes:
     return buf.getvalue()
 
 
+# ==========================================================
+# 端点
+# ==========================================================
+@router.get("/violations/count")
+def count_violations_for_export(
+    date_from: str | None = Query(None, description="起始日期 YYYY-MM-DD（含）"),
+    date_to: str | None = Query(None, description="结束日期 YYYY-MM-DD（含）"),
+    severity: str | None = Query(None, description="严重程度精确匹配"),
+    ppe_type: str | None = Query(None, description="违规类型模糊匹配，如 未佩戴口罩"),
+    vtype: str | None = Query(None, description="ppe_type 的别名（兼容保留）"),
+    lab_id: int | None = Query(None, ge=1, description="按实验室过滤"),
+):
+    """
+    导出前预览：返回当前筛选条件下可导出的记录条数。
+
+    与 GET /api/export/violations 使用完全相同的筛选口径与日期校验，
+    供前端在用户调整筛选条件时实时显示"符合条件 N 条"。
+    """
+    err, keyword = _resolve_filters(date_from, date_to, ppe_type, vtype)
+    if err is not None:
+        return err
+
+    total = db.count_violations(vtype=keyword, severity=severity,
+                                date_from=date_from, date_to=date_to,
+                                lab_id=lab_id)
+
+    return {
+        "total": total,
+        "max_export_rows": MAX_EXPORT_ROWS,
+        "exceed_limit": total > MAX_EXPORT_ROWS,
+        "formats": ["csv"] + (["xlsx"] if xlsx_available() else []),
+    }
+
+
 @router.get("/violations")
 def export_violations(
     fmt: str = Query("csv", pattern="^(csv|xlsx)$",
@@ -107,19 +190,9 @@ def export_violations(
     与 GET /api/violations 使用同一套筛选口径；不传 severity 时同样默认
     排除"正常"评估记录，保证导出内容与页面所见表一致。
     """
-    keyword = ppe_type or vtype
-
-    # 日期校验：格式与真实性都检查，统一返回 400 + error 字段
-    for label, value in (("date_from", date_from), ("date_to", date_to)):
-        if not is_valid_date(value):
-            return JSONResponse(
-                {"error": f"{label} 不是有效日期：{value}（应为 YYYY-MM-DD）"},
-                status_code=400)
-
-    if date_from and date_to and date_from > date_to:
-        return JSONResponse(
-            {"error": f"日期区间无效：起始 {date_from} 晚于结束 {date_to}"},
-            status_code=400)
+    err, keyword = _resolve_filters(date_from, date_to, ppe_type, vtype)
+    if err is not None:
+        return err
 
     total = db.count_violations(vtype=keyword, severity=severity,
                                 date_from=date_from, date_to=date_to,
@@ -130,20 +203,32 @@ def export_violations(
                       f"{MAX_EXPORT_ROWS} 条，请缩小日期或筛选范围"},
             status_code=400)
 
+    # Excel 依赖缺失时给出可读提示，而不是让 ImportError 变成 500 裸错
+    if fmt == "xlsx" and not xlsx_available():
+        return JSONResponse(
+            {"error": "服务器未安装 Excel 导出依赖 openpyxl，无法导出 .xlsx。"
+                      "请执行 pip install -r requirements.txt，或改用 CSV 导出"},
+            status_code=503)
+
     rows = db.query_violations(vtype=keyword, severity=severity,
                                date_from=date_from, date_to=date_to,
                                lab_id=lab_id, limit=max(total, 1), offset=0,
                                sort=sort, order=order)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if fmt == "xlsx":
-        content = _build_xlsx(rows)
-        media_type = XLSX_MEDIA_TYPE
-        filename = f"violations_{stamp}.xlsx"
-    else:
-        content = _build_csv(rows)
-        media_type = "text/csv; charset=utf-8"
-        filename = f"violations_{stamp}.csv"
+    try:
+        if fmt == "xlsx":
+            content = _build_xlsx(rows)
+            media_type = XLSX_MEDIA_TYPE
+            filename = f"violations_{stamp}.xlsx"
+        else:
+            content = _build_csv(rows)
+            media_type = "text/csv; charset=utf-8"
+            filename = f"violations_{stamp}.csv"
+    except Exception as exc:  # 兜底：任何生成失败都返回可读信息，而非 500 裸错
+        return JSONResponse(
+            {"error": f"导出文件生成失败：{type(exc).__name__}: {exc}"},
+            status_code=500)
 
     return Response(
         content=content,
