@@ -241,6 +241,12 @@ def match_person_ppe(detections: list[Detection],
         exact = b.x1 <= px <= b.x2 and b.y1 <= py <= b.y2
         expanded = (b.x1 - w * 0.4) <= px <= (b.x2 + w * 0.4) \
             and (b.y1 - h * 0.4) <= py <= (b.y2 + h * 0.4)
+        # 成对先验专用的小扩张（20%，BUG-21）：40% 扩张只说明"可以参与候选"，
+        # 不足以证明"这是本人的另一只手"。两人框部分重叠时，40% 扩张会覆盖到
+        # 对方的手套（S3/S12），而本人的手真正"稍微伸出框外"一般只超框几个
+        # 百分点（img_8e909ac5 实测伸出 4%）。
+        small = (b.x1 - w * 0.2) <= px <= (b.x2 + w * 0.2) \
+            and (b.y1 - h * 0.2) <= py <= (b.y2 + h * 0.2)
         lo, hi = _PPE_BAND.get(ppe.cls_name, (0.0, 1.0))
         rel = (py - b.y1) / h if h > 0 else 0.5
         plausible = lo <= rel <= hi
@@ -259,15 +265,15 @@ def match_person_ppe(detections: list[Detection],
         #   把它判给女生；他的左手已先行归属本人，故此处应让本人胜出。）
         # 守卫：不与已绑定的手套框高度重叠（IoU≥0.5 视为同一只手的重复框，
         #       此时不构成"第二只手"证据，交由普通规则处理）。
-        # 空间约束（BUG-19，验收报告 S2/S3/S11/S12）：「他的另一只手」必须
-        # 至少落在本人 40% 扩张框内。无此约束时 sibling 作为最高优先级会
-        # 抢走帧内**任意位置**的手套——两个相距很远的两人各戴一只手套，
-        # 后处理的那只必被先绑者抢走（名额被占但 conf 更低不入库），
-        # 失主被误判"未戴手套"。伸向旁人框的手（img_8e909ac5）本就在
-        # 本人扩张框内，约束不影响该场景。
+        # 空间约束（BUG-19/21，验收报告 S2/S3/S11/S12）：「他的另一只手」必须
+        # 落在本人 20% 小扩张框内（轻微伸出），且不得是与我方眼镜/手套无关的
+        # 远距框。无此约束时 sibling 作为最高优先级会抢走帧内**任意位置**的
+        # 手套（两个相距很远的两人各戴一只手套，后处理的那只必被先绑者抢走；
+        # 两人框部分重叠时 40% 扩张也会覆盖对方的手套）。
+        # 伸向旁人框的手（img_8e909ac5）伸出量仅 4%，20% 小扩张完全覆盖。
         sibling = False
         if ppe.cls_name == "gloves" and "gloves" in st.ppe:
-            sibling = expanded and _iou(ppe, st.ppe["gloves"]) < 0.5
+            sibling = small and _iou(ppe, st.ppe["gloves"]) < 0.5
         return (exact or expanded), exact, plausible, overlap, sibling, st
 
     # PPE 按置信度降序归属：保证"先到先得"落在这只手上置信度最高的那个框，
@@ -277,18 +283,27 @@ def match_person_ppe(detections: list[Detection],
     for ppe in ordered:
         px, py = ppe.center
         owner = None
-        # 统一候选集：中心落在 person 框内（规则1）或 40% 扩张框内（规则2），
-        # 返回 None 的是被守卫淘汰的（手套满额）。
+        # 统一候选集：只有与 PPE 存在空间关系的人才能参与竞争——中心落在
+        # person 框内（规则1）或 40% 扩张框内（规则2）。
+        # 空间命中硬过滤（BUG-21，验收报告 S11）：此前候选集是**全员**，
+        # 手套满额守卫让本人退出后，远处与该手套零交集的旁人会顶上来抢走它
+        # （A 框内有 3 只手套、B 在 1400px 外 → 第 3 只被判给 B）。`c[0]` 为
+        # 假即"无任何空间关系"，直接不得参选；候选为空时走规则 3 距离兜底。
         # 优先级：手套已有同类（成对先验） > 解剖学合理 > 精确包含 > 重叠占比 > 面积最小。
-        cands = [c for c in (_cand(st) for st in states) if c is not None]
+        cands = [c for c in (_cand(st) for st in states) if c is not None and c[0]]
         if cands:
             best = max(cands, key=lambda c: (c[4], c[2], c[1], c[3], -c[5].bbox.area))
             owner = best[5]
-        # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）
+        # 规则3：最近人员兜底（PPE 离所有人都很远时，仍按距离兜底）。
+        # 距离用「PPE 中心到 person 框边的最近距离」（框内为 0），而非到框心：
+        # 手大幅伸出框外时（img_aa379dec，手套中心超框缘 56% 框宽），到框心
+        # 的距离会被框尺寸放大，导致明明是本人伸出的手谁也认领不了。
+        # （BUG-21：候选集硬过滤后，这类 PPE 只剩本兜底可依。）
         if owner is None and states:
             def dist(st):
-                cx, cy = st.bbox.center
-                return ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+                dx = max(st.bbox.x1 - px, 0, px - st.bbox.x2)
+                dy = max(st.bbox.y1 - py, 0, py - st.bbox.y2)
+                return (dx * dx + dy * dy) ** 0.5
             nearest = min(states, key=dist)
             if dist(nearest) <= max_dist_ratio * _diag(nearest.bbox):
                 owner = nearest

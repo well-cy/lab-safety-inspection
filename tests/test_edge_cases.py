@@ -24,6 +24,8 @@
      BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
      BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.44）
      BUG-19 成对先验无空间约束 → 相距很远的两人互抢手套（验收报告 S2/S3/S11/S12）
+     BUG-21 验收复审：40% 扩张仍会抢部分重叠邻人的手套（S3/S12）、满额后零交集
+            旁人顶替抢手套（S11）→ sibling 收紧 20% + 空间命中硬过滤 + 兜底距离改到框边
      BUG-20 联合框判定无面积约束 → 弯腰俯身三人簇中真人被"平级重叠"误杀
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
@@ -606,6 +608,68 @@ def main():
         report("真联合框仍被面积约束杀掉（img_9491b9ea 场景不回归）",
                len(stsB) == 2,
                f"保留 {len(stsB)} 人（联合框 0.60 被杀，两位真人 0.85/0.83 保留）")
+
+        # ============ BUG-21：验收报告 S3/S11/S12 仍未修净 ============
+        # BUG-19 的 40% 扩张约束不够小：两人框部分重叠时，40% 扩张会覆盖到
+        # 对方的手套（S3 部分重叠 / S12 三人排队，已有一只手套的人照样抢）；
+        # 且候选集仍是全员，手套满额守卫让本人退出后，远处零交集的旁人会
+        # 顶上抢走 S11 的第 3 只手套。修复（PR5 验收报告建议）：
+        #   ① 空间命中硬过滤：与 PPE 无任何空间关系（框内 + 40% 扩张都够不到）
+        #      的人直接不得参选，候选为空走距离兜底；
+        #   ② sibling 收紧到 20% 小扩张（img_8e909ac5 实测伸手仅超框 4%）；
+        #   ③ 兜底距离改「PPE 中心到框边」（img_aa379dec：手伸出 56% 框宽，
+        #      到框心距离被放大导致没人认领）。
+        print("--- BUG-21 验收 S3/S11/S12（sibling 小扩张 + 空间硬过滤） ---")
+        from ai.ppe_matcher import match_person_ppe as _match7
+
+        # S3：两人部分重叠（重叠 150px），各戴手套
+        s3_p1 = _mk2("person", 0.90, 100, 100, 600, 900)
+        s3_p2 = _mk2("person", 0.88, 450, 100, 950, 900)
+        s3_g1 = _mk2("gloves", 0.80, 200, 600, 320, 700)   # P1 框内
+        s3_g2 = _mk2("gloves", 0.78, 700, 600, 820, 700)   # P2 框内、P1 框外
+        s3 = _match7([s3_p1, s3_p2, s3_g1, s3_g2])
+        s3_a = [s for s in s3 if abs(s.bbox.area - s3_p1.area) < 1e-6][0]
+        s3_b = [s for s in s3 if abs(s.bbox.area - s3_p2.area) < 1e-6][0]
+        report("S3 部分重叠两人各戴手套互不抢",
+               "gloves" in s3_a.ppe and "gloves" in s3_b.ppe,
+               f"P1={sorted(s3_a.ppe)}，P2={sorted(s3_b.ppe)}"
+               "（修复前 P1 凭 40% 扩张 sibling 抢走 P2 的手套）")
+
+        # S11：3 只手套全在 A 框内，A 名额满 → 远处零交集的 B 不得抢第 3 只
+        s11_a = _mk2("person", 0.90, 100, 100, 600, 900)
+        s11_b = _mk2("person", 0.88, 1500, 100, 1900, 900)
+        s11_g = [_mk2("gloves", 0.86, 200, 600, 320, 700),
+                 _mk2("gloves", 0.84, 340, 620, 460, 720),
+                 _mk2("gloves", 0.60, 200, 300, 320, 400)]
+        s11 = _match7([s11_a, s11_b] + s11_g)
+        s11_a2 = [s for s in s11 if abs(s.bbox.area - s11_a.area) < 1e-6][0]
+        s11_b2 = [s for s in s11 if abs(s.bbox.area - s11_b.area) < 1e-6][0]
+        report("S11 满额者的第 3 只手套不被远处零交集者抢走",
+               "gloves" not in s11_b2.ppe,
+               f"A={sorted(s11_a2.ppe)}，B={sorted(s11_b2.ppe)}"
+               "（修复前 B 顶替满额退出的 A 抢走第 3 只）")
+
+        # S12：三人排队各有手套
+        s12_ps = [_mk2("person", 0.90, 100, 100, 600, 900),
+                  _mk2("person", 0.88, 550, 100, 1050, 900),
+                  _mk2("person", 0.86, 1000, 100, 1500, 900)]
+        s12_gs = [_mk2("gloves", 0.82, 200, 600, 320, 700),
+                  _mk2("gloves", 0.80, 650, 600, 770, 700),
+                  _mk2("gloves", 0.78, 1150, 600, 1270, 700)]
+        s12 = _match7(s12_ps + s12_gs)
+        s12_own = sorted(tuple(sorted(s.ppe)) for s in s12)
+        report("S12 三人各自有手套互不抢",
+               s12_own == [("gloves",), ("gloves",), ("gloves",)],
+               f"三人 PPE={s12_own}（修复前中间人的手套被左邻 sibling 抢走）")
+
+        # 对照：手大幅伸出框外（img_aa379dec，伸出 56% 框宽）→ 距离兜底仍认领
+        r_p = _mk2("person", 0.71, 53, 17, 259, 325)
+        r_g = _mk2("gloves", 0.67, 340, 110, 408, 203)      # 中心 (374,157)
+        r_sts = _match7([r_p, r_g])
+        r_own = [s.ppe for s in r_sts if abs(s.bbox.area - r_p.area) < 1e-6][0]
+        report("伸出手大幅出框时距离兜底仍归最近本人",
+               "gloves" in r_own,
+               f"本人={sorted(r_own)}（修复前硬过滤后无人认领 → 误判未戴手套）")
 
     finally:
         main_mod.task_manager = saved_tm
