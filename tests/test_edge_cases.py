@@ -559,18 +559,21 @@ def main():
                f"左人={sorted(l8.ppe)}，右人={sorted(r8.ppe)}"
                "（修复前右人的手套被左人抢走 → 右人误判未戴手套）")
 
-        # 对照：手套在本人扩张框内但框外（伸手场景）→ 成对先验仍生效
+        # 对照：手套与本人框相交但中心在框外（伸手场景）→ 成对先验仍生效。
+        # 注意（BUG-22）：sibling 还要求手套与本人框 overlap>0——完全悬在
+        # 扩张环带里、与本人框零交集的手套不构成"另一只手"证据，故此
+        # 对照用例的手套必须跨压本人框缘（x1=480 < 框缘 500）。
         p_near_l = _mk2("person", 0.90, 100, 100, 500, 900)
         p_near_r = _mk2("person", 0.88, 700, 100, 1000, 900)
         g_own = _mk2("gloves", 0.80, 200, 600, 320, 700)       # 左人手套
-        g_reach = _mk2("gloves", 0.75, 520, 500, 640, 600)     # 左人伸向中间的手
+        g_reach = _mk2("gloves", 0.75, 480, 500, 600, 600)     # 左人跨缘伸出的手
         sts9 = _match5([p_near_l, p_near_r, g_own, g_reach])
         l9 = [s for s in sts9 if abs(s.bbox.area - p_near_l.area) < 1e-6][0]
         r9 = [s for s in sts9 if abs(s.bbox.area - p_near_r.area) < 1e-6][0]
-        report("扩张框内的伸手场景成对先验仍生效（BUG-14 不回归）",
+        report("跨压框缘的伸手场景成对先验仍生效（BUG-14 不回归）",
                "gloves" in l9.ppe and "gloves" not in r9.ppe,
                f"左人={sorted(l9.ppe)}，右人={sorted(r9.ppe)}"
-               "（伸手中心 x=580 在左人扩张框 0~660 内 → 仍归本人）")
+               "（手套中心 x=540 在左人 20% 扩张边界 580 内且与本人框相交 → 归本人）")
 
         # ============ BUG-20：联合框判定误杀平级重叠真人 ============
         # img_97445215 三人俯身图：中女(0.516)框与右女(55%)、后男(16%)均有
@@ -622,18 +625,20 @@ def main():
         print("--- BUG-21 验收 S3/S11/S12（sibling 小扩张 + 空间硬过滤） ---")
         from ai.ppe_matcher import match_person_ppe as _match7
 
-        # S3：两人部分重叠（重叠 150px），各戴手套
+        # S3：两人部分重叠（重叠 150px），各戴手套。
+        # g2 中心 670 特意放进 P1 的 20% 扩张环带（边界 700）内但与 P1 框
+        # 零交集（框 x1=640 > P1 缘 600）——锁死 overlap>0 约束（BUG-22）。
         s3_p1 = _mk2("person", 0.90, 100, 100, 600, 900)
         s3_p2 = _mk2("person", 0.88, 450, 100, 950, 900)
         s3_g1 = _mk2("gloves", 0.80, 200, 600, 320, 700)   # P1 框内
-        s3_g2 = _mk2("gloves", 0.78, 700, 600, 820, 700)   # P2 框内、P1 框外
+        s3_g2 = _mk2("gloves", 0.78, 640, 600, 760, 700)   # P2 框内、P1 框外（环带内）
         s3 = _match7([s3_p1, s3_p2, s3_g1, s3_g2])
         s3_a = [s for s in s3 if abs(s.bbox.area - s3_p1.area) < 1e-6][0]
         s3_b = [s for s in s3 if abs(s.bbox.area - s3_p2.area) < 1e-6][0]
         report("S3 部分重叠两人各戴手套互不抢",
                "gloves" in s3_a.ppe and "gloves" in s3_b.ppe,
                f"P1={sorted(s3_a.ppe)}，P2={sorted(s3_b.ppe)}"
-               "（修复前 P1 凭 40% 扩张 sibling 抢走 P2 的手套）")
+               "（g2 中心 670 在 P1 20% 环带内但与 P1 框零交集 → 不得抢）")
 
         # S11：3 只手套全在 A 框内，A 名额满 → 远处零交集的 B 不得抢第 3 只
         s11_a = _mk2("person", 0.90, 100, 100, 600, 900)
@@ -649,13 +654,14 @@ def main():
                f"A={sorted(s11_a2.ppe)}，B={sorted(s11_b2.ppe)}"
                "（修复前 B 顶替满额退出的 A 抢走第 3 只）")
 
-        # S12：三人排队各有手套
+        # S12：三人排队各有手套。g3 中心 1120 放进 P2 的 20% 环带
+        # （1050~1150）内但与 P2 框零交集（框 x1=1060 > P2 缘 1050）。
         s12_ps = [_mk2("person", 0.90, 100, 100, 600, 900),
                   _mk2("person", 0.88, 550, 100, 1050, 900),
                   _mk2("person", 0.86, 1000, 100, 1500, 900)]
         s12_gs = [_mk2("gloves", 0.82, 200, 600, 320, 700),
                   _mk2("gloves", 0.80, 650, 600, 770, 700),
-                  _mk2("gloves", 0.78, 1150, 600, 1270, 700)]
+                  _mk2("gloves", 0.78, 1060, 600, 1180, 700)]
         s12 = _match7(s12_ps + s12_gs)
         s12_own = sorted(tuple(sorted(s.ppe)) for s in s12)
         report("S12 三人各自有手套互不抢",
