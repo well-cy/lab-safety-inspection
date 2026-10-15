@@ -123,6 +123,21 @@ def _iou(a, b) -> float:
     return inter / (area_a + area_b - inter)
 
 
+def _containment(a, b) -> float:
+    """包含率 = 交集面积 / 较小框面积（0~1）。
+
+    与 IoU 的区别：大框套小框时 IoU 会被大框的"额外面积"稀释
+    （小框 100% 在大框内但 IoU 可能仅 0.45），包含率则恒为 1.0。
+    用于识别「同一切片复检产生的一大一小重复框」。
+    """
+    iw = min(a.x2, b.x2) - max(a.x1, b.x1)
+    ih = min(a.y2, b.y2) - max(a.y1, b.y1)
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    smaller = min((a.x2 - a.x1) * (a.y2 - a.y1), (b.x2 - b.x1) * (b.y2 - b.y1))
+    return (iw * ih) / smaller if smaller > 0 else 0.0
+
+
 class PersonDetector:
     """COCO 预训练人员检测器（person 类锚点）
 
@@ -191,11 +206,23 @@ class PPEDetector:
     """YOLO PPE 检测器"""
 
     def __init__(self, weights: str, conf_threshold: float = 0.35, device: str = "auto",
-                 imgsz: int = 640):
+                 imgsz: int = 640, conf_person: float | None = None,
+                 conf_goggles: float | None = None):
         from ultralytics import YOLO  # 延迟导入，加快模块加载
         self.weights_path = str(weights)
         self.model = YOLO(self.weights_path)
         self.conf_threshold = conf_threshold
+        # person 单独阈值（2026-10-14 方案 C）：重叠/遮挡人群里真人的置信度
+        # 常被联合框压低（实测 img_9491b9ea 中男 0.290），而 PPE 类降阈值会
+        # 引入假阳性（右女被塞假 mask 0.339）。故只对 person 放宽。
+        # None = 与 conf_threshold 一致（旧行为）。
+        self.conf_person = conf_person
+        # goggles 单独阈值（2026-10-14 BUG-18）：模型会把普通近视镜/眼镜误判成
+        # 护目镜（img_169f81a5 中间男士近视镜 conf 0.389 > 全局 0.35），而真护目镜
+        # 实测 conf 全部 ≥ 0.70（t01 0.842 / img_169f81a5 0.703 / img_fe7aaa21 0.721）。
+        # 夹逼取 0.50：挡掉普通眼镜假阳性，真护目镜零伤亡。
+        # 方向与 person 相反：person 放宽（0.28 < 0.35），goggles 收紧（0.50 > 0.35）。
+        self.conf_goggles = conf_goggles
         self.imgsz = imgsz
         if device == "auto":
             import torch
@@ -213,8 +240,37 @@ class PPEDetector:
             return torch.cuda.get_device_name(self.device)
         return str(self.device)
 
+    @staticmethod
+    def _apply_class_thresholds(dets: list[Detection], conf: float,
+                                conf_person: float | None,
+                                conf_goggles: float | None = None) -> list[Detection]:
+        """按类收口：person 用 conf_person，goggles 用 conf_goggles，其余类用 conf。
+
+        方案 C（2026-10-14）：person 放宽（重叠人群中真人 conf 被联合框压低）；
+        BUG-18（2026-10-14）：goggles 收紧（普通眼镜误判护目镜，真护目镜 conf 显著更高）。
+
+        推理阶段统一用 min(所有阈值) 低阈值跑（保证不漏），
+        最后在这里按类过滤。必须放在**所有**检测来源（全图双尺度 + 切片复检）
+        汇总之后——切片复检同样会产出低置信 PPE 假阳性
+        （img_9491b9ea 的假 mask 0.339 就是切片产物）。
+        """
+        if (conf_person is None or conf_person == conf) and \
+           (conf_goggles is None or conf_goggles == conf):
+            return dets
+
+        def _thr(name: str) -> float:
+            if name == "person" and conf_person is not None:
+                return conf_person
+            if name == "goggles" and conf_goggles is not None:
+                return conf_goggles
+            return conf
+
+        return [d for d in dets if d.conf >= _thr(d.cls_name)]
+
     def detect(self, frame: np.ndarray, conf: float | None = None,
-               tile_recheck: bool = False) -> list[Detection]:
+               tile_recheck: bool = False,
+               conf_person: float | None = None,
+               conf_goggles: float | None = None) -> list[Detection]:
         """对单帧图像（BGR ndarray）执行检测，返回业务类别 Detection 列表
 
         双尺度：imgsz 与 640 不同时，两个尺度各推理一次取并集（不同目标
@@ -222,12 +278,22 @@ class PPEDetector:
         面具在 640 更稳）。
         tile_recheck：额外做 2×2 带重叠切片复检（大幅提升小目标召回，
         如正面透明护目镜），代价是推理耗时约 ×2.5，仅建议图片模式开启。
+        conf_person：person 类的独立阈值（None=沿用 conf）。用于重叠人群
+        场景放宽真人检出，同时不让 PPE 类跟着降阈值引入假阳性。
+        conf_goggles：goggles 类的独立阈值（None=沿用 conf）。用于收紧
+        普通眼镜误判护目镜的假阳性（真护目镜 conf 显著更高）。
         """
+        base_conf = conf or self.conf_threshold
+        p_conf = conf_person if conf_person is not None else self.conf_person
+        g_conf = conf_goggles if conf_goggles is not None else self.conf_goggles
+        # 推理统一用最低阈值，最后按类收口
+        lows = [base_conf] + [v for v in (p_conf, g_conf) if v is not None]
+        low = min(lows)
         scales = sorted({640, self.imgsz})
         detections: list[Detection] = []
         for sz in scales:
             results = self.model.predict(
-                frame, conf=conf or self.conf_threshold, device=self.device,
+                frame, conf=low, device=self.device,
                 verbose=False, imgsz=sz,
                 iou=0.5,  # 收紧 NMS：默认 0.7 会保留"套住多人"的联合框
             )
@@ -252,9 +318,10 @@ class PPEDetector:
         # 否则底部鞋子等全图误检会错误地"支持"切片手套准入（②img_ed8a1e3e 连锁误检）
         detections = self._filter_implausible(detections, frame)
         if tile_recheck:
-            detections += self._tile_detect(frame, conf, full_dets=detections)
+            detections += self._tile_detect(frame, low, full_dets=detections)
         merged = self._nms_merge(detections) if (len(scales) > 1 or tile_recheck) else detections
-        return self._filter_implausible(merged, frame)
+        merged = self._filter_implausible(merged, frame)
+        return self._apply_class_thresholds(merged, base_conf, p_conf, g_conf)
 
     # 全图级合理性过滤：手套是肢体末端，正常框不会超过画面 20%
     # （白大褂袖子/衣料被误认成手套时框可达画面 25%~33%：特写构图 33%、
@@ -436,7 +503,9 @@ class PPEDetector:
         return float(skin.mean())
 
     @staticmethod
-    def _nms_merge(detections: list[Detection], iou_thr: float = 0.55) -> list[Detection]:
+    def _nms_merge(detections: list[Detection], iou_thr: float = 0.55,
+                   contain_iou: float = 0.40,
+                   contain_ratio: float = 0.85) -> list[Detection]:
         """类内贪心 NMS：合并多尺度重复框，保留高置信度。
 
         ⚠️ 必须**按类别各自独立**做抑制（2026-10-12 修复）。
@@ -450,17 +519,39 @@ class PPEDetector:
         更隐蔽的是外层 `for cls in {d.cls_name ...}` 遍历字符串集合，
         集合迭代顺序受 PYTHONHASHSEED 随机化影响 → **谁抑制谁每次重启都变**，
         表现为「有时人少一个、有时白大褂少一个」的幽灵 bug。
+
+        ⚠️ 2026-10-14 增补「高包含率合并」（PPE 类专用）。
+        切片复检会产出**一大一小**的同类重复框：小框几乎完全落在高置信框
+        内，但 IoU 只有 0.4~0.55，躲过常规 NMS，随后被误绑到另一个人身上。
+        实测 img_8e909ac5（实验室 4 人）：同一只右手 0.719(3347,1323,3795,1705)
+        与 0.389(3515,1411,3791,1692)，IoU≈0.45 / **包含率 100%** →
+        0.389 逃逸后被归属给了旁边的女生，网页显示「她戴了手套」。
+        故对 PPE 类追加：IoU ≥0.40 且包含率 ≥0.85 → 同一目标，丢弃低置信者。
+
+        person 类**不做**包含合并：真人前后站位时，后排只露半身的小框会
+        100% 落在前排大框内（这是两个真人，不是重复框），交由
+        `_dedup_persons` 中带 PPE 豁免的精细化判定处理。
         """
         merged: list[Detection] = []
         by_cls: dict[str, list[Detection]] = {}
         for d in detections:
             by_cls.setdefault(d.cls_name, []).append(d)
-        for group in by_cls.values():          # 每类一个独立 kept 列表
+        for cls, group in by_cls.items():      # 每类一个独立 kept 列表
+            allow_contain = cls != "person"
             group = sorted(group, key=lambda d: -d.conf)
             kept: list[Detection] = []
             for d in group:
-                if any(_iou(d, m) > iou_thr for m in kept):
-                    continue                    # 只与同类比较
+                dup = False
+                for m in kept:
+                    if _iou(d, m) > iou_thr:          # 常规类内 NMS
+                        dup = True
+                        break
+                    if allow_contain and _iou(d, m) >= contain_iou \
+                            and _containment(d, m) >= contain_ratio:
+                        dup = True                     # 高包含率重复框（切片复检）
+                        break
+                if dup:
+                    continue                           # 只与同类比较
                 kept.append(d)
             merged.extend(kept)
         merged.sort(key=lambda d: -d.conf)
