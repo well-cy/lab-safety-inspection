@@ -23,6 +23,7 @@
      BUG-16 手套中心压 person 框缘 0.02px → 无精确命中时按重叠占比消歧
      BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
      BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.44）
+     BUG-19 成对先验无空间约束 → 相距很远的两人互抢手套（验收报告 S2/S3/S11/S12）
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -532,6 +533,41 @@ def main():
         report("两阈值均未配置时短路返回原列表",
                len(kept6) == 2,
                "None/None → 原样返回（推理阶段的 0.35 已承担过滤）")
+
+        # ============ BUG-19：成对先验跨人抢手套（验收报告 S2/S3/S11/S12） ============
+        # 两人相距很远、各戴一只手套：BUG-14 的成对先验没有空间约束，
+        # sibling 作为最高优先级，先绑到手套的人会把帧内任意位置的其他
+        # 手套抢走（名额被占、conf 更低不入库）→ 失主被误判"未戴手套"。
+        # 修复：sibling 要求手套落在本人 40% 扩张框内（空间接触才构成
+        # "另一只手"证据；BUG-14 的伸手场景本就在扩张框内，不受影响）。
+        print("--- BUG-19 成对先验空间约束（跨人抢手套） ---")
+        from ai.ppe_matcher import match_person_ppe as _match5
+
+        p_far_l = _mk2("person", 0.90, 100, 100, 500, 900)
+        p_far_r = _mk2("person", 0.88, 1500, 100, 1900, 900)
+        g_far_l = _mk2("gloves", 0.80, 200, 600, 320, 700)     # 左人手套（先处理）
+        g_far_r = _mk2("gloves", 0.75, 1600, 600, 1720, 700)   # 右人手套
+
+        sts8 = _match5([p_far_l, p_far_r, g_far_l, g_far_r])
+        l8 = [s for s in sts8 if abs(s.bbox.area - p_far_l.area) < 1e-6][0]
+        r8 = [s for s in sts8 if abs(s.bbox.area - p_far_r.area) < 1e-6][0]
+        report("相距很远的两人各戴一只手套互不抢（验收场景）",
+               "gloves" in l8.ppe and "gloves" in r8.ppe,
+               f"左人={sorted(l8.ppe)}，右人={sorted(r8.ppe)}"
+               "（修复前右人的手套被左人抢走 → 右人误判未戴手套）")
+
+        # 对照：手套在本人扩张框内但框外（伸手场景）→ 成对先验仍生效
+        p_near_l = _mk2("person", 0.90, 100, 100, 500, 900)
+        p_near_r = _mk2("person", 0.88, 700, 100, 1000, 900)
+        g_own = _mk2("gloves", 0.80, 200, 600, 320, 700)       # 左人手套
+        g_reach = _mk2("gloves", 0.75, 520, 500, 640, 600)     # 左人伸向中间的手
+        sts9 = _match5([p_near_l, p_near_r, g_own, g_reach])
+        l9 = [s for s in sts9 if abs(s.bbox.area - p_near_l.area) < 1e-6][0]
+        r9 = [s for s in sts9 if abs(s.bbox.area - p_near_r.area) < 1e-6][0]
+        report("扩张框内的伸手场景成对先验仍生效（BUG-14 不回归）",
+               "gloves" in l9.ppe and "gloves" not in r9.ppe,
+               f"左人={sorted(l9.ppe)}，右人={sorted(r9.ppe)}"
+               "（伸手中心 x=580 在左人扩张框 0~660 内 → 仍归本人）")
 
     finally:
         main_mod.task_manager = saved_tm
