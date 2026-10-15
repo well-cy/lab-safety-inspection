@@ -208,6 +208,15 @@ def match_person_ppe(detections: list[Detection],
         )
         states = [PersonState(person_id=1, bbox=virt, virtual=True)]
 
+    # 成对先验的最小相交占比（BUG-23，2026-10-15 验收复审）：
+    # 手套框与本人 person 框的交集 / 手套面积 ≥ 0.2 才构成「另一只手」证据。
+    # BUG-22 的 overlap>0 挡不住 1~20px 小交叠——手套绝大部分面积在本人框内
+    # （本人的 exact 命中）时，邻人视角的小交叠不该让邻人的 sibling 生效。
+    # 实测标定：真伸手场景（img_8e909ac5 伸出 4% 框宽、手套大部分在框内）
+    # 与压线案例（img_9491b9ea g_edge）占比 0.439，均 >0.2；
+    # 邻人小交叠普遍 ≈0.01~0.05。0.2 取保守中值（验收建议 0.2~0.35 区间下限）。
+    _SIBLING_MIN_OVERLAP = 0.2
+
     # 各类 PPE 的解剖学合理带：PPE 中心相对 person 框顶部的比例（rel_y）。
     # 口罩/护目镜只可能出现在头部（框顶部 ~45%）；手套在躯干活动范围；
     # 站立者的"手套"落到框底部 12%（脚部）几乎必然是错检或他人的手。
@@ -265,16 +274,18 @@ def match_person_ppe(detections: list[Detection],
         #   把它判给女生；他的左手已先行归属本人，故此处应让本人胜出。）
         # 守卫：不与已绑定的手套框高度重叠（IoU≥0.5 视为同一只手的重复框，
         #       此时不构成"第二只手"证据，交由普通规则处理）。
-        # 空间约束（BUG-19/21/22，验收报告 S2/S3/S11/S12）：「他的另一只手」必须
-        # ① 落在本人 20% 小扩张框内（轻微伸出）② 与本人 person 框**实际相交**
-        # （overlap > 0，验收复审 2026-10-15 晚补充：纯粹悬在扩张环带里、与本人
-        # 框零交集的手套不构成成对证据——紧贴/部分重叠人员的手套正落在这一
-        # 环带，此前仍会被抢）③ 与已绑定手套 IoU<0.5（非同一只手的重复框）。
+        # 空间约束（BUG-19/21/22/23，验收报告 S2/S3/S11/S12 及复审）：「他的另一只
+        # 手」必须 ① 落在本人 20% 小扩张框内（轻微伸出）② 与本人 person 框
+        # **实际相交且占比 ≥ 0.2**（overlap>0 是 BUG-22 的初版约束；BUG-23 收紧：
+        # 仅 1~20px 的小交叠占比 ≈0.01~0.05，部分重叠邻人照样满足 overlap>0 而
+        # 抢走手套——手套绝大部分在邻人自己够不着的本人框内时，邻人视角的小
+        # 交叠不构成成对证据）③ 与已绑定手套 IoU<0.5（非同一只手的重复框）。
         # 无空间约束时 sibling 作为最高优先级会抢走帧内任意位置的手套。
-        # 伸向旁人框的手（img_8e909ac5）与本人框相交（伸出仅 4%），不受影响。
+        # img_8e909ac5 伸手场景手套大部分与本人框相交（占比 >0.2），不受影响。
+        # img_9491b9ea 压线手套 g_edge 与本人框占比 0.439，不受影响。
         sibling = False
         if ppe.cls_name == "gloves" and "gloves" in st.ppe:
-            sibling = (small and overlap > 0
+            sibling = (small and overlap >= _SIBLING_MIN_OVERLAP
                        and _iou(ppe, st.ppe["gloves"]) < 0.5)
         return (exact or expanded), exact, plausible, overlap, sibling, st
 

@@ -26,6 +26,10 @@
      BUG-19 成对先验无空间约束 → 相距很远的两人互抢手套（验收报告 S2/S3/S11/S12）
      BUG-21 验收复审：40% 扩张仍会抢部分重叠邻人的手套（S3/S12）、满额后零交集
             旁人顶替抢手套（S11）→ sibling 收紧 20% + 空间命中硬过滤 + 兜底距离改到框边
+     BUG-22 验收再复审：环带内零交集手套仍被抢 → sibling 追加 overlap>0，
+            S3/S12 测试点移进 20% 边界内侧
+     BUG-23 验收三复审：1~20px 小交叠仍可被邻人 sibling 抢 → 收紧为相交占比
+            overlap >= 0.2，并补 0<overlap<0.2 守卫（x1=580）与大幅相交正向对照
      BUG-20 联合框判定无面积约束 → 弯腰俯身三人簇中真人被"平级重叠"误杀
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
@@ -676,6 +680,40 @@ def main():
         report("伸出手大幅出框时距离兜底仍归最近本人",
                "gloves" in r_own,
                f"本人={sorted(r_own)}（修复前硬过滤后无人认领 → 误判未戴手套）")
+
+        # ============ BUG-23：sibling 追加 overlap>=0.2（验收再复审） ============
+        # BUG-22 的 overlap>0 挡不住小交叠：手套绝大部分面积在本人框内时，
+        # 部分重叠邻人与该手套仅有 1~20px 交叠（占比 ≈0.01~0.05），
+        # 邻人的 sibling 仍会成立并抢走。收紧为相交占比 ≥ 0.2。
+        # 守卫：手套与本人框 0 < overlap < 0.2（x1=580，与 P1 缘 600 交叠 20px，
+        # 占比 0.167）→ 本人 sibling 不得生效，手套交还规则链（邻人 exact 命中）。
+        b23_p1 = _mk2("person", 0.90, 100, 100, 600, 900)
+        b23_p2 = _mk2("person", 0.88, 450, 100, 950, 900)
+        b23_g = _mk2("gloves", 0.80, 580, 600, 700, 700)   # P2 exact 命中；与 P1 交叠 20px
+        b23 = _match7([b23_p1, b23_p2, b23_g])
+        # 注意：P1/P2 面积相同（500×800），不能按面积匹配（会取到同一 state），
+        # 必须按 bbox 坐标匹配
+        b23_a = [s for s in b23 if abs(s.bbox.x1 - 100) < 1e-6][0]
+        b23_b = [s for s in b23 if abs(s.bbox.x1 - 450) < 1e-6][0]
+        report("小交叠（0<overlap<0.2）不构成成对先验证据（BUG-23 守卫）",
+               "gloves" not in b23_a.ppe and "gloves" in b23_b.ppe,
+               f"P1={sorted(b23_a.ppe)}，P2={sorted(b23_b.ppe)}"
+               "（g 与 P1 交叠仅 20px 占比 0.167 → P1 sibling 不得抢；P2 exact 命中）")
+
+        # 正向对照：手套大部分面积与本人框相交（占比 >0.2）→ sibling 照常生效。
+        # 复刻真实伸手形态（img_8e909ac5 / img_9491b9ea g_edge 占比 0.439）：
+        # 手套 120px 宽，60px 在本人框内（占比 0.5），且本人已绑另一只手套。
+        b23b_p1 = _mk2("person", 0.90, 100, 100, 600, 900)
+        b23b_p2 = _mk2("person", 0.88, 560, 100, 950, 900)   # 与 P1 重叠 40px
+        b23b_own = _mk2("gloves", 0.80, 200, 600, 320, 700)  # P1 已绑的第一只
+        b23b_g = _mk2("gloves", 0.78, 540, 600, 660, 700)    # 60/120 在 P1 内（0.5）
+        b23b = _match7([b23b_p1, b23b_p2, b23b_own, b23b_g])
+        b23b_a = [s for s in b23b if abs(s.bbox.x1 - 100) < 1e-6][0]
+        b23b_b = [s for s in b23b if abs(s.bbox.x1 - 560) < 1e-6][0]
+        report("大幅相交（overlap>=0.2）的成对先验不回归（BUG-23 正向对照）",
+               "gloves" in b23b_a.ppe and "gloves" not in b23b_b.ppe,
+               f"P1={sorted(b23b_a.ppe)}，P2={sorted(b23b_b.ppe)}"
+               "（g 60/120 在 P1 内占比 0.5 → P1 sibling 胜出；P2 不得抢）")
 
     finally:
         main_mod.task_manager = saved_tm
