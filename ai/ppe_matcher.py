@@ -130,9 +130,15 @@ def _is_union_box(p: Detection, others: list[Detection]) -> bool:
 
     判据：>=2 个 conf 比 p 高 0.1+ 的 person 框与 p 的交集合计覆盖 p 面积 50%+。
     真人框不会被多个更高置信度框大面积覆盖（那样 NMS/真值都会偏向保留大框）。
+
+    面积约束（BUG-20，img_97445215 三人俯身图）：p 必须比每个覆盖框大 1.8 倍+。
+    真联合框要装下两个人，面积至少是最大被套框的 ~2 倍；若 p 与某个覆盖框
+    面积相当（如弯腰俯身的三人簇，右女框 = 中女框的 93%），那是平级重叠，
+    不是"套住"——否则 55%+16% 的零散覆盖会凑满 50% 误杀真人。
     """
     covered = 0.0
     count = 0
+    max_area = 0.0
     for o in others:
         if o.conf < p.conf + 0.1:
             continue
@@ -142,7 +148,9 @@ def _is_union_box(p: Detection, others: list[Detection]) -> bool:
         if inter > 0:
             covered += inter
             count += 1
-    return count >= 2 and p.area > 0 and covered >= 0.5 * p.area
+            max_area = max(max_area, o.area)
+    return (count >= 2 and p.area > 0 and covered >= 0.5 * p.area
+            and p.area >= 1.8 * max_area)
 
 
 def _dedup_persons(persons: list[Detection],

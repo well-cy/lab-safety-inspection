@@ -24,6 +24,7 @@
      BUG-17 重叠人群真人置信度被联合框压低 → person 按类阈值单独放宽（0.28）
      BUG-18 普通眼镜误判护目镜（conf 0.389 过 0.35 阈值）→ goggles 按类阈值收紧（0.44）
      BUG-19 成对先验无空间约束 → 相距很远的两人互抢手套（验收报告 S2/S3/S11/S12）
+     BUG-20 联合框判定无面积约束 → 弯腰俯身三人簇中真人被"平级重叠"误杀
 
 注意：本文件为新增，不修改 tests/run_tests.py 的 T01~T14。
 """
@@ -568,6 +569,43 @@ def main():
                "gloves" in l9.ppe and "gloves" not in r9.ppe,
                f"左人={sorted(l9.ppe)}，右人={sorted(r9.ppe)}"
                "（伸手中心 x=580 在左人扩张框 0~660 内 → 仍归本人）")
+
+        # ============ BUG-20：联合框判定误杀平级重叠真人 ============
+        # img_97445215 三人俯身图：中女(0.516)框与右女(55%)、后男(16%)均有
+        # 重叠，合计覆盖 71% 过了"50% 且 ≥2 框"阈值被当联合框杀掉 → 3 人只
+        # 报 2 人。真联合框要装下两个人，面积至少是最大被套框的 ~2 倍
+        # （img_9491b9ea 联合框为单人 4 倍）；此处右女框 = 中女框的 93%，
+        # 是平级重叠不是"套住" → 加 p.area ≥ 1.8×max(o.area) 面积约束。
+        print("--- BUG-20 联合框判定的面积约束（俯身三人簇） ---")
+        from ai.ppe_matcher import match_person_ppe as _match6
+        from ai.detector import Detection as _D2
+
+        def _mk3(cls, conf, box):
+            return _D2(cls_name=cls, raw_cls=cls, conf=conf,
+                       x1=box[0], y1=box[1], x2=box[2], y2=box[3])
+
+        p_man   = _mk3("person", 0.737, (550, 79, 801, 595))    # 后男
+        p_mid   = _mk3("person", 0.516, (652, 120, 1157, 988))  # 中女（被误杀者）
+        p_right = _mk3("person", 0.825, (741, 411, 1378, 1051)) # 右女
+        g1 = _mk3("gloves", 0.725, (650, 771, 748, 954))
+        g2 = _mk3("gloves", 0.798, (787, 861, 914, 936))
+        lc = _mk3("lab_coat", 0.852, (922, 621, 1377, 1064))
+
+        stsA = _match6([p_man, p_mid, p_right, g1, g2, lc])
+        report("俯身三人簇 3 人都保留（联合框面积约束）",
+               len(stsA) == 3,
+               f"person 清理后剩 {len(stsA)} 人"
+               "（修复前中女被当联合框杀掉，3 人只报 2 人）")
+
+        # 对照：真联合框（面积远大于被套者）仍应被杀
+        u_big = _mk3("person", 0.60, (100, 100, 1400, 900))     # 大联合框
+        r_a = _mk3("person", 0.85, (150, 150, 650, 850))        # 真人A（大部分在联合框内）
+        r_b = _mk3("person", 0.83, (750, 200, 1300, 880))       # 真人B
+        stsB = _match6([u_big, r_a, r_b])
+        areas = sorted(s.bbox.area for s in stsB)
+        report("真联合框仍被面积约束杀掉（img_9491b9ea 场景不回归）",
+               len(stsB) == 2,
+               f"保留 {len(stsB)} 人（联合框 0.60 被杀，两位真人 0.85/0.83 保留）")
 
     finally:
         main_mod.task_manager = saved_tm
