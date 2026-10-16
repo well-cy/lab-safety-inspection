@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>实验室安全智能巡检与违规预警系统</title>
-<!-- ECharts 本地化：从 /static/vendor 加载，断网也能渲染图表 -->
+<!-- 图表库：优先使用本地副本（离线可用），加载失败再回退 CDN -->
 <script src="/static/vendor/echarts.min.js"></script>
+<script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
 <style>
 :root{--primary:#1f6feb;--danger:#e5484d;--warn:#f59e0b;--ok:#2ea043;--bg:#f5f7fa;--card:#fff;--text:#1f2328;--muted:#6a737d;--border:#e4e7eb}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -284,7 +285,7 @@ loadDashboard();
 loadSettings();
 
 function sevBadge(s){return s==='严重违规'?'<span class="badge major">严重违规</span>':s==='一般违规'?'<span class="badge minor">一般违规</span>':'<span class="badge ok">正常</span>'}
-const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽'};
+const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽',coverall:'连体防护服'};
 
 async function runInspect(){
   const f=$('i-file').files[0];
@@ -292,9 +293,10 @@ async function runInspect(){
   const lab=$('i-lab').value;
   const fd=new FormData();
   fd.append('file',f); fd.append('lab_id',lab);
-  const isVideo=f.type.startsWith('video')||/\.(mp4|avi|mov)$/i.test(f.name);
+  const isVideo=f.type.startsWith('video')||/\.(mp4|avi|mov|mkv)$/i.test(f.name);
+  if(f.size>200*1024*1024){alert('文件过大（>200MB），请换小一点的文件');return}
   $('i-run').disabled=true;
-  $('i-status').textContent=isVideo?'⏳ 视频处理中（GPU 推理，请耐心等待）…':'⏳ 处理中…';
+  $('i-status').textContent=isVideo?'⏳ 视频处理中（CPU 逐帧推理，请耐心等待）…':'⏳ 处理中…';
   $('i-result-card').style.display='none';
   // 图片/视频处理耗时长，放宽超时：图片 120s，视频 600s
   const timeout=isVideo?600000:120000;

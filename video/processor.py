@@ -50,8 +50,10 @@ def draw_annotations(frame, person_states, events, areas):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_ROI, 1)
 
     event_map = {e.person_id: e for e in events}
-    # person 框
+    # person 框（虚拟聚合人员不画外框，只画其 PPE 框）
     for st in person_states:
+        if getattr(st, "virtual", False):
+            continue
         ev = event_map.get(st.person_id)
         if ev is None:
             color, tag = COLOR_OK, "OK"
@@ -74,11 +76,12 @@ def draw_annotations(frame, person_states, events, areas):
             text = "; ".join(ev.violation_types) + f" [{ev.severity}]"
             cv2.putText(frame, text, (x1, y2 + 42),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-    # PPE 框
+    # PPE 框（小图上 1px 淡色线经 JPEG 压缩后不可见，按图幅自适应加粗）
+    ppe_th = 2 if min(h, w) <= 900 else 1
     for st in person_states:
         for ppe in st.ppe.values():
             x1, y1, x2, y2 = map(int, [ppe.x1, ppe.y1, ppe.x2, ppe.y2])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PPE, 1)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PPE, ppe_th)
             cv2.putText(frame, f"{_cn(ppe.cls_name)} {ppe.conf:.2f}",
                         (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_PPE, 1)
     return frame
@@ -88,9 +91,11 @@ class InspectionPipeline:
     """巡检处理管线：封装 detector + matcher + roi + rule engine"""
 
     def __init__(self, detector: PPEDetector, engine: SafetyRuleEngine | None = None,
-                 screenshot_dir="outputs/screenshots", cooldown_s=None):
+                 screenshot_dir="outputs/screenshots", tile_recheck: bool = False,
+                 cooldown_s=None):
         self.detector = detector
         self.engine = engine or SafetyRuleEngine()
+        self.tile_recheck = tile_recheck  # 图片模式建议开启（小目标召回），视频模式关闭（性能）
         # 截图冷却时间：默认沿用模块常量；生产环境由 backend/config.py 注入，
         # 使其可通过 LABSAFETY_VIOLATION_COOLDOWN_S 环境变量调整。
         self.cooldown_s = (VIOLATION_COOLDOWN_S if cooldown_s is None
@@ -102,7 +107,7 @@ class InspectionPipeline:
     def analyze_frame(self, frame, areas: list[AreaROI], frame_time=0.0):
         """对单帧执行完整分析，返回 (person_states, events, detections)"""
         h, w = frame.shape[:2]
-        dets = self.detector.detect(frame)
+        dets = self.detector.detect(frame, tile_recheck=self.tile_recheck)
         states = match_person_ppe(dets)
         states = annotate_person_states(states, areas, w, h)
         events = self.engine.evaluate(states, frame_time=frame_time)

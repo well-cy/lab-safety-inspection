@@ -10,6 +10,11 @@ API 概览：
   GET  /api/violations        违规记录查询（支持筛选）
   POST /api/detect/image      上传图片 → 检测 + 违规判断
   POST /api/detect/video      上传视频 → 检测 + 违规判断
+  POST /api/detect/video/async 上传视频 → 后台任务（返回 task_id）
+  GET  /api/tasks             后台任务列表
+  GET  /api/tasks/{task_id}   后台任务进度/结果
+  GET  /api/maintenance/storage 运行期文件占用
+  POST /api/maintenance/cleanup 清理运行期文件（默认 dry-run）
   GET  /api/settings          实验室/区域/规则配置
   POST /api/settings/lab      新建实验室
   POST /api/settings/area     新建区域（含 PPE 规则）
@@ -63,15 +68,20 @@ class ModelUnavailableError(RuntimeError):
 
 
 _detector = None
-_pipeline = None
+_pipeline = None          # 视频/通用管线（快速，无切片复检）
+_pipeline_img = None      # 图片管线（开启 2×2 切片复检，提升小目标召回）
 _pipeline_lock = threading.Lock()
 
 MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
-    "模型权重不随 git 仓库分发，获取方式见 README「如何运行」第 3 节：\n"
-    "  curl -L -o ai/model/sh17_yolov8s.pt "
+    "模型权重不随 git 仓库分发。任选一种获取方式：\n"
+    "  A) 自训 5 类 Lab-PPE 模型（推荐）：放到 ai/model/labppe_v8s.pt，\n"
+    "     由组长/数据集负责人单独分发（见 docs/DEVELOPMENT_GUIDE.md）\n"
+    "  B) SH17 官方权重（17 类，回退方案）：\n"
+    "     curl -L -o ai/model/sh17_yolov8s.pt "
     "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt\n"
-    "（国内网络需加代理：curl 追加 --proxy http://127.0.0.1:7890）"
+    "  也可用 LABSAFETY_MODEL_PATH 环境变量指向任意权重路径。\n"
+    "  （国内网络需加 proxy 参数：curl 追加 --proxy http://127.0.0.1:7890）"
 )
 
 
@@ -83,7 +93,7 @@ def _model_unavailable_handler(request, exc):
 
 def get_pipeline():
     """懒加载模型管线（首次请求时加载，避免服务启动卡顿）"""
-    global _detector, _pipeline
+    global _detector, _pipeline, _pipeline_img
     with _pipeline_lock:
         if _pipeline is None:
             if not MODEL_PATH.exists():
@@ -94,18 +104,38 @@ def get_pipeline():
                 from video.processor import InspectionPipeline
                 from rule_engine.engine import SafetyRuleEngine
                 # 阈值 / 设备 / 截图目录 / 冷却时间均来自集中配置
+                # conf_person：person 类单独阈值（重叠人群中放宽真人检出，
+                # 不让 PPE 类跟着降阈值引入假阳性）—— 见 docs/E5_11
+                # conf_goggles：goggles 类单独阈值（收紧普通眼镜误判护目镜，
+                # 见 docs/E5_9 BUG-18）
                 _detector = PPEDetector(MODEL_PATH,
                                         conf_threshold=config.CONF_THRESHOLD,
-                                        device=config.DEVICE)
+                                        device=config.DEVICE,
+                                        conf_person=config.CONF_PERSON,
+                                        conf_goggles=config.CONF_GOGGLES)
                 _pipeline = InspectionPipeline(
                     detector=_detector,
                     engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
                     screenshot_dir=config.SCREENSHOT_DIR,
                     cooldown_s=config.VIOLATION_COOLDOWN_S)
+                # 图片管线：开启 2×2 切片复检，提升小目标（手套/护目镜）召回。
+                # 切片复检开销较大，仅用于单图检测，不用于逐帧视频。
+                _pipeline_img = InspectionPipeline(
+                    detector=_detector,
+                    engine=SafetyRuleEngine(config.MINOR_THRESHOLD),
+                    screenshot_dir=config.SCREENSHOT_DIR,
+                    cooldown_s=config.VIOLATION_COOLDOWN_S,
+                    tile_recheck=True)
             except OSError as exc:
                 raise ModelUnavailableError(
                     f"模型加载失败：{exc}\n{MODEL_DOWNLOAD_HINT}") from exc
     return _pipeline
+
+
+def get_image_pipeline():
+    """图片检测专用管线（含 2×2 切片复检，小目标召回更稳）"""
+    get_pipeline()
+    return _pipeline_img
 
 
 @app.on_event("startup")
@@ -137,9 +167,14 @@ def index():
 def model_info():
     p = get_pipeline()
     det = p.detector
+    # base 字段按实际权重文件名判断，便于区分自制 Lab-PPE 模型与 SH17 官方权重
+    weights_name = Path(det.weights_path).name
+    base = ("Lab-PPE 自制模型 (ultralytics)"
+            if weights_name.startswith("labppe") or "labppe" in weights_name
+            else "SH17 dataset (official YOLOv8s weights, ultralytics)")
     return {
-        "model_file": Path(det.weights_path).name,
-        "base": "SH17 dataset (official YOLOv8s weights, ultralytics)",
+        "model_file": weights_name,
+        "base": base,
         "device": det.device_name,
         "conf_threshold": det.conf_threshold,
         "raw_classes": det.raw_names,
@@ -202,7 +237,8 @@ def detect_image(file: UploadFile = File(...),
     if not db.lab_exists(lab_id):
         return bad_request(f"实验室不存在: lab_id={lab_id}")
 
-    pipeline = get_pipeline()
+    # 图片检测走"切片复检"专用管线（小目标召回更好）
+    pipeline = get_image_pipeline()
     suffix = Path(file.filename or "upload.jpg").suffix or ".jpg"
     save_path = UPLOAD_DIR / f"img_{uuid.uuid4().hex[:8]}{suffix}"
     with open(save_path, "wb") as f:
