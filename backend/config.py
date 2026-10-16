@@ -17,8 +17,8 @@
 --------
 .. code-block:: bash
 
-    # 切到 E4 训练好的模型（技术债 #1 的目标场景）
-    export LABSAFETY_MODEL_PATH=~/labppe_v8s_best.pt
+    # 切到正式主模型（自训 6 类 Lab-PPE 权重，默认加载顺序已优先它）
+    export LABSAFETY_MODEL_PATH=~/labppe_v8s.pt
     # 提高置信度阈值、强制 CPU
     export LABSAFETY_CONF_THRESHOLD=0.45
     export LABSAFETY_DEVICE=cpu

@@ -75,9 +75,10 @@ _pipeline_lock = threading.Lock()
 MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
     "模型权重不随 git 仓库分发。任选一种获取方式：\n"
-    "  A) 自训 5 类 Lab-PPE 模型（推荐）：放到 ai/model/labppe_v8s.pt，\n"
+    "  A) 自训 6 类 Lab-PPE 模型（推荐，正式主模型）：放到 ai/model/labppe_v8s.pt，\n"
+    "     类别为 person / mask / gloves / lab_coat / goggles / coverall，\n"
     "     由组长/数据集负责人单独分发（见 docs/DEVELOPMENT_GUIDE.md）\n"
-    "  B) SH17 官方权重（17 类，回退方案）：\n"
+    "  B) SH17 官方权重（17 类，仅回退方案）：\n"
     "     curl -L -o ai/model/sh17_yolov8s.pt "
     "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt\n"
     "  也可用 LABSAFETY_MODEL_PATH 环境变量指向任意权重路径。\n"
@@ -178,7 +179,10 @@ def model_info():
         "device": det.device_name,
         "conf_threshold": det.conf_threshold,
         "raw_classes": det.raw_names,
-        "system_classes": ["person", "mask", "gloves", "lab_coat", "goggles", "helmet"],
+        # 系统业务类别与正式主模型 labppe_v8s.pt 的 6 类一致。
+        # 注意 coverall（连体防护服）只是检测证据类，不在 ALLOWED_PPE /
+        # 区域 required_ppe 中（有意设计，改动需走契约评审）。
+        "system_classes": ["person", "mask", "gloves", "lab_coat", "goggles", "coverall"],
     }
 
 
