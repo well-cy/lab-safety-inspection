@@ -410,6 +410,70 @@ def create_lab(name: str, description: str = "") -> int:
         conn.close()
 
 
+def restore_default_area(lab_id: int) -> dict | None:
+    """显式恢复空实验室的默认区域；不覆盖已有配置，事务避免并发重复。"""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM laboratories WHERE id=?", (lab_id,)).fetchone():
+                return None
+            rows = conn.execute("SELECT * FROM areas WHERE lab_id=?", (lab_id,)).fetchall()
+            if rows:
+                if len(rows) == 1:
+                    area = rows[0]
+                    rules = conn.execute("SELECT ppe_type, required FROM safety_rules WHERE area_id=?",
+                                         (area["id"],)).fetchall()
+                    if (area["name"] == "实验操作区"
+                            and tuple(area[k] for k in ("x1", "y1", "x2", "y2")) == (0.22, 0.18, 0.88, 0.92)
+                            and {(r["ppe_type"], r["required"]) for r in rules}
+                            == {("mask", 1), ("gloves", 1), ("lab_coat", 1)}):
+                        return {"area_id": area["id"], "created": False}
+                raise ValueError("该实验室已有区域配置，恢复操作不会覆盖，请先确认并处理现有区域")
+            cur = conn.execute(
+                "INSERT INTO areas(lab_id,name,x1,y1,x2,y2) VALUES(?,?,?,?,?,?)",
+                (lab_id, "实验操作区", 0.22, 0.18, 0.88, 0.92))
+            area_id = cur.lastrowid
+            conn.executemany("INSERT INTO safety_rules(area_id,ppe_type,required) VALUES(?,?,1)",
+                             [(area_id, ppe) for ppe in ("mask", "gloves", "lab_coat")])
+            return {"area_id": area_id, "created": True}
+    finally:
+        conn.close()
+
+
+def update_lab(lab_id: int, name: str, description: str = "") -> bool:
+    """修改实验室；保持 ID 和所有历史关联不变，不存在时返回 False。"""
+    conn = get_conn()
+    try:
+        with conn:
+            cur = conn.execute(
+                "UPDATE laboratories SET name=?, description=? WHERE id=?",
+                (name, description, lab_id))
+            return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_lab(lab_id: int) -> bool:
+    """仅删除无关联数据的实验室；检查与删除持有同一个写事务。"""
+    conn = get_conn()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if not conn.execute("SELECT 1 FROM laboratories WHERE id=?", (lab_id,)).fetchone():
+                return False
+            for table, label in (("areas", "区域"), ("detection_records", "检测记录"),
+                                 ("violation_events", "事件记录")):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE lab_id=?",
+                                     (lab_id,)).fetchone()[0]
+                if count:
+                    raise ValueError(f"该实验室下仍有 {count} 条{label}，不能删除，请先处理关联数据")
+            conn.execute("DELETE FROM laboratories WHERE id=?", (lab_id,))
+            return True
+    finally:
+        conn.close()
+
+
 def create_area(lab_id: int, name: str, x1: float, y1: float, x2: float,
                 y2: float, required_ppe: list) -> int:
     """

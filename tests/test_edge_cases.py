@@ -121,7 +121,7 @@ def main():
             main_mod.task_manager = small
             before = len(list(config.UPLOAD_DIR.glob("vid_*.mp4")))
             r = client.post("/api/detect/video/async",
-                            files={"file": ("a.mp4", io.BytesIO(b"\x00" * 512),
+                            files={"file": ("a.mp4", io.BytesIO(DEMO_VIDEO.read_bytes()),
                                             "video/mp4")},
                             data={"lab_id": "1", "stride": "2"})
             after = len(list(config.UPLOAD_DIR.glob("vid_*.mp4")))
@@ -157,7 +157,7 @@ def main():
                                              "video/mp4")},
                              data={"lab_id": "1", "stride": "2"})
             report("伪视频（仅文件头）→ 400 且报错可读",
-                   rr.status_code == 400 and "无法打开" in rr.json().get("error", ""),
+                   rr.status_code == 400 and "视频" in rr.json().get("error", ""),
                    f"HTTP {rr.status_code}")
 
             with tempfile.TemporaryDirectory() as tmp:

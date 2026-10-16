@@ -30,7 +30,7 @@ import backend.main as main_mod  # noqa: E402
 from backend.main import app     # noqa: E402
 
 RESULTS = []
-SHOT_DIR = ROOT / "outputs" / "screenshots"
+SHOT_DIR = main_mod.config.SCREENSHOT_DIR
 TEST_IMG = ROOT / "data" / "test" / "t09_lab_coat_ceremony.jpg"
 
 
