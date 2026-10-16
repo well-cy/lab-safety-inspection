@@ -1577,12 +1577,12 @@ tools：`make_A369_editor.py`（生成 4 批审核编辑器）/ `check_A369_expo
 | u8 | 8 | 无导出=未改动，接受工作区初始标签（含 2 张 UV 紫光图，person 用 lab_coat 1.15× 扩张候选） |
 | c35 | 31 | 同上（CONFLICT 已自动清理 47 假阳后接受） |
 | m2 | 165 | 应用导出 44 图改动 |
-| m1 | 165 | 应用导出 58 图改动 + **恢复 30 个被误删的原始 gloves 框**（复核拼图确认均为真手套：机加工系列深蓝防割手套 + 25_015 白针织手套；符合「非 person 框消失默认视为误删」硬约束④） |
+| m1 | 165 | 应用导出 58 图改动；30 个原标 gloves 框删除经复核为**有意口径**（用户拍板「手套统统不恢复」，2026-10-16 深夜；此前 AI 曾按硬约束④恢复，已用 `outputs/_A369/undo_gloves_restore.py` 对称撤回，只动恢复集零波及） |
 
 **去重**：1 张与库内 MD5 重复（`SafetyLab__g97` ≡ `g97_png_jpg`，保库内版、弃 A369 副本，实际落 368 张）。
 **导出 2 个极小 goggles 框**（251020__56 顶部 h≈0.026）目检为远景人脸护目镜，非误拖，保留。
 
-**框类别增量**：person +530 / mask +135 / gloves +424 / lab_coat +457 / goggles +123 / coverall 0（合计 +1,669）。
+**框类别增量**：person +530 / mask +135 / gloves +394 / lab_coat +457 / goggles +123 / coverall 0（合计 +1,639）。
 **备份**：`data/lab_ppe/_label_backup/labels_pre_A369_20261016_225809.tar.gz`。
 **切分**：seed=20261016 随机 90/10。
 
@@ -1590,9 +1590,9 @@ tools：`make_A369_editor.py`（生成 4 批审核编辑器）/ `check_A369_expo
 
 | split | 图 | person | mask | gloves | lab_coat | goggles | coverall | 框合计 |
 |---|---|---|---|---|---|---|---|---|
-| train | 2,338 | 3,330 | 1,360 | 2,780 | 2,279 | 1,118 | 360 | 11,227 |
-| valid | 444 | 417 | 234 | 571 | 493 | 208 | 42 | 1,965 |
+| train | 2,338 | 3,330 | 1,360 | 2,753 | 2,279 | 1,118 | 360 | 11,200 |
+| valid | 444 | 417 | 234 | 568 | 493 | 208 | 42 | 1,962 |
 | test | 807 | 123 | 60 | 138 | 148 | 382 | 0 | 851 |
 
 - test 红线未动 ✅；img=lbl 对账全 ✅
-- 待办：下一轮训练前用 `tools/eval_dataset2_6cls.py` / `eval_t01t10_6cls.py` 复测，重点看 gloves（本批 +424，直击 M5 域不匹配）
+- 待办：下一轮训练前用 `tools/eval_dataset2_6cls.py` / `eval_t01t10_6cls.py` 复测，重点看 gloves（本批 +394）
