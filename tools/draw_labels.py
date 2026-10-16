@@ -146,12 +146,16 @@ def main():
             if tok.isdigit():
                 targets.add(int(tok))
             else:
-                rev = {"mask": 0, "gloves": 1, "lab_coat": 2, "goggles": 3, "face": 0,
-                       "glove": 1, "goggle": 1}
+                # 项目 6 类体系（与 data/lab_ppe/data.yaml 对齐，2026-10-16 修正：
+                # 旧表是 4 类时代的遗留，lab_coat 曾被错映射到 2=gloves）
+                rev = {"person": 0, "mask": 1, "gloves": 2, "lab_coat": 3,
+                       "goggles": 4, "coverall": 5,
+                       "glove": 2, "goggle": 4, "labcoat": 3, "coat": 3, "suit": 5}
                 if tok.lower() in rev:
                     targets.add(rev[tok.lower()])
                 else:
-                    print(f"[警告] 无法识别的类别: {tok}（用数字 id 或 mask/gloves/lab_coat/goggles）")
+                    print(f"[警告] 无法识别的类别: {tok}（用数字 id 或 "
+                          f"person/mask/gloves/lab_coat/goggles/coverall）")
         print(f"[类别过滤] 只画类别 {sorted(targets)}")
 
     out = Path(args.out)
@@ -189,8 +193,8 @@ def main():
             names = load_names(src, args.names)
             print(f"[目录模式] {src} → 类别映射 {names or '(按原始 id 显示)'}")
             imgs = sorted(p for p in src.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
-            if args.limit:
-                imgs = imgs[: args.limit]
+            # 注意：--limit 的截断必须放在「类别筛图」之后（见下方），
+            # 否则按字母序取前 N 张再筛类别会只剩极少数命中（2026-10-16 修正）
             jobs += [(p, resolve_label(p), names, targets) for p in imgs]
 
     # 按类别筛图：只保留标注里含目标类别的图片
@@ -207,6 +211,10 @@ def main():
                     break
         jobs = kept
         print(f"[类别筛图] 含目标类别的图片 {len(jobs)}/{before} 张")
+
+    # 数量截断放在类别筛图之后：--limit 表示"最多画 N 张目标类别图"
+    if args.limit and args.limit < len(jobs):
+        jobs = jobs[: args.limit]
 
     if args.random and args.random < len(jobs):
         import random
