@@ -496,6 +496,17 @@ async def create_lab(name: str = Form(...), description: str = Form("")):
     return {"ok": True}
 
 
+@app.post("/api/settings/lab/{lab_id}/restore-default-area")
+def restore_default_area(lab_id: int):
+    try:
+        result = db.restore_default_area(lab_id)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    if result is None:
+        return JSONResponse({"error": f"实验室不存在: lab_id={lab_id}"}, status_code=404)
+    return {"ok": True, **result}
+
+
 @app.put("/api/settings/lab/{lab_id}")
 def update_lab(lab_id: int, name: str = Form(...), description: str = Form("")):
     try:
