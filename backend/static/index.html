@@ -124,13 +124,21 @@ label{font-size:13px;color:var(--muted)}
       <label>严重程度</label>
       <select id="v-sev"><option value="">全部</option><option>一般违规</option><option>严重违规</option></select>
       <label>日期</label><input type="date" id="v-date">
-      <button class="btn" onclick="loadViolations()">查询</button>
+      <button class="btn" onclick="loadViolations(1)">查询</button>
     </div>
     <!-- 导出功能挂载点（成员5 的 export.js 动态渲染） -->
     <div id="export-panel"></div>
     <table><thead><tr><th>时间</th><th>实验室</th><th>区域</th><th>人员</th><th>违规类型</th><th>严重程度</th><th>视频内时间</th><th>截图</th></tr></thead>
     <tbody id="v-body"></tbody></table>
-    <div class="hint" id="v-count"></div>
+    <div class="row" style="margin-top:10px;margin-bottom:0;align-items:center">
+      <div class="hint" id="v-count" style="margin-top:0"></div>
+      <span style="flex:1"></span>
+      <label>每页</label>
+      <select id="v-pagesize" onchange="vChangePageSize()"><option>50</option><option>100</option><option selected>200</option></select>
+      <button class="btn ghost" id="v-prev" style="padding:4px 12px" onclick="vGoto(-1)">上一页</button>
+      <span class="hint" id="v-pageinfo" style="margin-top:0"></span>
+      <button class="btn ghost" id="v-next" style="padding:4px 12px" onclick="vGoto(1)">下一页</button>
+    </div>
   </div>
 </section>
 
@@ -144,8 +152,10 @@ label{font-size:13px;color:var(--muted)}
 <!-- 系统设置 -->
 <section id="tab-settings" style="display:none">
   <div class="card">
-    <h3>新建实验室</h3>
+    <h3>实验室管理</h3>
     <div class="row"><label>名称</label><input id="s-labname" placeholder="例如：实验室B"><label>说明</label><input id="s-labdesc" style="width:260px"><button class="btn" onclick="createLab()">创建</button></div>
+    <table><thead><tr><th>ID</th><th>名称</th><th>说明</th><th>操作</th></tr></thead><tbody id="s-labs"></tbody></table>
+    <div class="hint">提示：删除实验室前需确保其下无区域、检测记录或违规事件关联；存在关联时后端会返回可读错误提示，历史数据不会被级联删除。</div>
   </div>
   <div class="card">
     <h3>检测区域配置（矩形 ROI，坐标为 0~1 归一化比例）</h3>
@@ -166,6 +176,7 @@ label{font-size:13px;color:var(--muted)}
         <label><input type="checkbox" class="s-ppe" value="helmet">安全帽</label>
       </span>
       <button class="btn" onclick="createArea()">创建区域</button>
+      <button class="btn ghost" onclick="restoreDefaultArea()">恢复默认区域</button>
     </div>
     <table><thead><tr><th>区域ID</th><th>名称</th><th>ROI</th><th>必须佩戴</th><th>操作</th></tr></thead><tbody id="s-areas"></tbody></table>
     <div class="hint">提示：上传检测页面选中的实验室若没有配置任何区域，则所有人员都视为处于"普通区域"，不会触发 PPE 违规判断。</div>
@@ -347,13 +358,20 @@ function renderVideoResult(r){
 }
 
 /* ---------- 违规记录 ---------- */
-async function loadViolations(){
+const vState={page:1,pageSize:200,totalCount:0};
+async function loadViolations(resetPage){
+  if(resetPage)vState.page=1;
+  vState.pageSize=parseInt($('v-pagesize').value,10)||200;
   try{
     const p=new URLSearchParams();
     if($('v-type').value)p.set('vtype',$('v-type').value);
     if($('v-sev').value)p.set('severity',$('v-sev').value);
     if($('v-date').value)p.set('date',$('v-date').value);
+    p.set('limit',vState.pageSize);
+    p.set('offset',(vState.page-1)*vState.pageSize);
     const r=await apiFetch('/api/violations?'+p);
+    // total_count=符合筛选条件的真实总条数（新后端）；旧后端无此字段时回退 total
+    vState.totalCount=(r.total_count!=null)?r.total_count:r.total;
     const tb=$('v-body'); tb.innerHTML='';
     r.items.forEach(v=>{
       tb.insertAdjacentHTML('beforeend',`<tr>
@@ -362,9 +380,24 @@ async function loadViolations(){
         <td>${v.frame_time? v.frame_time+'s':'—'}</td>
         <td>${v.screenshot_url?`<img class="thumb" src="${v.screenshot_url}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
     });
-    $('v-count').textContent=`共 ${r.total} 条记录`;
+    $('v-count').textContent=`共 ${vState.totalCount} 条记录`;
+    renderVPager();
   }catch(e){console.error('违规记录加载失败',e)}
 }
+function renderVPager(){
+  const pages=Math.max(1,Math.ceil(vState.totalCount/vState.pageSize));
+  $('v-pageinfo').textContent=`第 ${Math.min(vState.page,pages)} / ${pages} 页`;
+  $('v-prev').disabled=vState.page<=1;
+  $('v-next').disabled=vState.page>=pages;
+}
+function vGoto(d){
+  const pages=Math.max(1,Math.ceil(vState.totalCount/vState.pageSize));
+  const np=vState.page+d;
+  if(np<1||np>pages)return;
+  vState.page=np;
+  loadViolations();
+}
+function vChangePageSize(){vState.page=1;loadViolations();}
 loadViolations();
 
 /* ---------- 数据统计 ---------- */
@@ -394,10 +427,63 @@ async function loadStats(){
 async function loadSettings(){
   try{
     settingsCache=await apiFetch('/api/settings');
-    $('s-lab').innerHTML=settingsCache.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
-    $('i-lab').innerHTML=$('s-lab').innerHTML;
+    const labOpts=settingsCache.labs.map(l=>{const o=document.createElement('option');o.value=l.id;o.textContent=l.name;return o});
+    const sl=$('s-lab'), il=$('i-lab');
+    sl.innerHTML=''; il.innerHTML='';
+    labOpts.forEach(o=>sl.appendChild(o)); labOpts.forEach(o=>il.appendChild(o.cloneNode(true)));
+    renderLabs();
     renderAreas();
   }catch(e){console.error('设置加载失败',e)}
+}
+function renderLabs(){
+  const data=settingsCache; if(!data)return;
+  const tb=$('s-labs'); tb.innerHTML='';
+  data.labs.forEach(l=>{
+    const tr=document.createElement('tr'); tr.dataset.labId=l.id;
+    const tdId=document.createElement('td'); tdId.textContent=l.id;
+    const tdName=document.createElement('td'); tdName.className='lab-name'; tdName.textContent=l.name;
+    const tdDesc=document.createElement('td'); tdDesc.className='lab-desc'; tdDesc.textContent=l.description||'—';
+    const tdOps=document.createElement('td'); tdOps.className='lab-ops';
+    const be=document.createElement('button'); be.className='btn ghost'; be.style.padding='4px 10px'; be.textContent='编辑'; be.onclick=()=>startEditLab(l.id);
+    const bd=document.createElement('button'); bd.className='btn danger'; bd.style.padding='4px 10px'; bd.textContent='删除'; bd.onclick=()=>deleteLab(l.id);
+    tdOps.append(be,bd);
+    tr.append(tdId,tdName,tdDesc,tdOps);
+    tb.appendChild(tr);
+  });
+}
+function startEditLab(id){
+  const tr=document.querySelector(`tr[data-lab-id="${id}"]`);
+  const lab=settingsCache.labs.find(l=>l.id===id);
+  if(!tr||!lab)return;
+  const mkInput=(sel,val,w)=>{const td=tr.querySelector(sel);td.innerHTML='';const inp=document.createElement('input');inp.value=val;inp.style.width=w;td.appendChild(inp);};
+  mkInput('.lab-name',lab.name,'140px');
+  mkInput('.lab-desc',lab.description||'','240px');
+  const tdOps=tr.querySelector('.lab-ops'); tdOps.innerHTML='';
+  const bs=document.createElement('button'); bs.className='btn'; bs.style.padding='4px 10px'; bs.textContent='保存'; bs.onclick=()=>updateLab(id);
+  const bc=document.createElement('button'); bc.className='btn ghost'; bc.style.padding='4px 10px'; bc.textContent='取消'; bc.onclick=renderLabs;
+  tdOps.append(bs,bc);
+}
+async function updateLab(id){
+  const tr=document.querySelector(`tr[data-lab-id="${id}"]`);
+  if(!tr)return;
+  const name=tr.querySelector('.lab-name input').value.trim();
+  const desc=tr.querySelector('.lab-desc input').value;
+  if(!name){showToast('实验室名称不能为空','warn');return}
+  const fd=new FormData();
+  fd.append('name',name); fd.append('description',desc);
+  try{
+    await apiFetch(`/api/settings/lab/${id}`,{method:'PUT',body:fd});
+    showToast('实验室已更新','success');
+    loadSettings();
+  }catch(e){/* toast 已显示 */}
+}
+async function deleteLab(id){
+  if(!confirm('确认删除该实验室？存在关联区域/记录时将被后端拒绝。'))return;
+  try{
+    await apiFetch(`/api/settings/lab/${id}`,{method:'DELETE'});
+    showToast('实验室已删除','success');
+    loadSettings();
+  }catch(e){/* toast 已显示 */}
 }
 function renderAreas(s){
   const data=s||settingsCache; if(!data)return;
@@ -405,10 +491,16 @@ function renderAreas(s){
   if(!lab)return;
   const tb=$('s-areas'); tb.innerHTML='';
   lab.areas.forEach(a=>{
-    tb.insertAdjacentHTML('beforeend',`<tr><td>${a.id}</td><td>${a.name}</td>
-      <td>(${a.x1},${a.y1}) ~ (${a.x2},${a.y2})</td>
-      <td>${a.required_ppe.map(p=>PPE_CN[p]).join('、')}</td>
-      <td><button class="btn danger" style="padding:4px 10px" onclick="deleteArea(${a.id})">删除</button></td></tr>`);
+    const tr=document.createElement('tr');
+    const tdId=document.createElement('td'); tdId.textContent=a.id;
+    const tdName=document.createElement('td'); tdName.textContent=a.name;
+    const tdRoi=document.createElement('td'); tdRoi.textContent=`(${a.x1},${a.y1}) ~ (${a.x2},${a.y2})`;
+    const tdPpe=document.createElement('td'); tdPpe.textContent=a.required_ppe.map(p=>PPE_CN[p]).join('、');
+    const tdOps=document.createElement('td');
+    const bd=document.createElement('button'); bd.className='btn danger'; bd.style.padding='4px 10px'; bd.textContent='删除'; bd.onclick=()=>deleteArea(a.id);
+    tdOps.appendChild(bd);
+    tr.append(tdId,tdName,tdRoi,tdPpe,tdOps);
+    tb.appendChild(tr);
   });
 }
 async function createLab(){
@@ -459,6 +551,17 @@ async function deleteArea(id){
     showToast('区域已删除','success');
     loadSettings();
   }catch(e){/* toast 已显示 */}
+}
+async function restoreDefaultArea(){
+  const labId=$('s-lab').value;
+  if(!labId){showToast('请先选择实验室','warn');return}
+  const lab=settingsCache&&settingsCache.labs.find(l=>l.id==labId);
+  if(!confirm('确认为实验室「'+(lab?lab.name:'')+'」恢复默认区域？\n默认区域为「实验操作区」(0.22,0.18)~(0.88,0.92)，需佩戴口罩/手套/实验服。\n仅当该实验室当前没有任何区域时才会创建；已有配置不会被覆盖。'))return;
+  try{
+    const r=await apiFetch(`/api/settings/lab/${labId}/restore-default-area`,{method:'POST'});
+    showToast(r.created?'默认区域已恢复':'该实验室已存在相同的默认区域，无需恢复','success');
+    loadSettings();
+  }catch(e){/* 409/404 错误 toast 已由 apiFetch 显示 */}
 }
 
 /* ---------- ROI 可视化编辑器 ---------- */
