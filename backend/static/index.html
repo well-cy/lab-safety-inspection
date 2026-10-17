@@ -410,8 +410,10 @@ async function loadStats(){
 async function loadSettings(){
   try{
     settingsCache=await apiFetch('/api/settings');
-    $('s-lab').innerHTML=settingsCache.labs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
-    $('i-lab').innerHTML=$('s-lab').innerHTML;
+    const labOpts=settingsCache.labs.map(l=>{const o=document.createElement('option');o.value=l.id;o.textContent=l.name;return o});
+    const sl=$('s-lab'), il=$('i-lab');
+    sl.innerHTML=''; il.innerHTML='';
+    labOpts.forEach(o=>sl.appendChild(o)); labOpts.forEach(o=>il.appendChild(o.cloneNode(true)));
     renderLabs();
     renderAreas();
   }catch(e){console.error('设置加载失败',e)}
@@ -420,26 +422,29 @@ function renderLabs(){
   const data=settingsCache; if(!data)return;
   const tb=$('s-labs'); tb.innerHTML='';
   data.labs.forEach(l=>{
-    tb.insertAdjacentHTML('beforeend',`<tr data-lab-id="${l.id}">
-      <td>${l.id}</td>
-      <td class="lab-name">${l.name}</td>
-      <td class="lab-desc">${l.description||'—'}</td>
-      <td class="lab-ops">
-        <button class="btn ghost" style="padding:4px 10px" onclick="startEditLab(${l.id})">编辑</button>
-        <button class="btn danger" style="padding:4px 10px" onclick="deleteLab(${l.id})">删除</button>
-      </td></tr>`);
+    const tr=document.createElement('tr'); tr.dataset.labId=l.id;
+    const tdId=document.createElement('td'); tdId.textContent=l.id;
+    const tdName=document.createElement('td'); tdName.className='lab-name'; tdName.textContent=l.name;
+    const tdDesc=document.createElement('td'); tdDesc.className='lab-desc'; tdDesc.textContent=l.description||'—';
+    const tdOps=document.createElement('td'); tdOps.className='lab-ops';
+    const be=document.createElement('button'); be.className='btn ghost'; be.style.padding='4px 10px'; be.textContent='编辑'; be.onclick=()=>startEditLab(l.id);
+    const bd=document.createElement('button'); bd.className='btn danger'; bd.style.padding='4px 10px'; bd.textContent='删除'; bd.onclick=()=>deleteLab(l.id);
+    tdOps.append(be,bd);
+    tr.append(tdId,tdName,tdDesc,tdOps);
+    tb.appendChild(tr);
   });
 }
 function startEditLab(id){
   const tr=document.querySelector(`tr[data-lab-id="${id}"]`);
   const lab=settingsCache.labs.find(l=>l.id===id);
   if(!tr||!lab)return;
-  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  tr.querySelector('.lab-name').innerHTML=`<input value="${esc(lab.name)}" style="width:140px">`;
-  tr.querySelector('.lab-desc').innerHTML=`<input value="${esc(lab.description||'')}" style="width:240px">`;
-  tr.querySelector('.lab-ops').innerHTML=
-    `<button class="btn" style="padding:4px 10px" onclick="updateLab(${id})">保存</button>
-     <button class="btn ghost" style="padding:4px 10px" onclick="renderLabs()">取消</button>`;
+  const mkInput=(sel,val,w)=>{const td=tr.querySelector(sel);td.innerHTML='';const inp=document.createElement('input');inp.value=val;inp.style.width=w;td.appendChild(inp);};
+  mkInput('.lab-name',lab.name,'140px');
+  mkInput('.lab-desc',lab.description||'','240px');
+  const tdOps=tr.querySelector('.lab-ops'); tdOps.innerHTML='';
+  const bs=document.createElement('button'); bs.className='btn'; bs.style.padding='4px 10px'; bs.textContent='保存'; bs.onclick=()=>updateLab(id);
+  const bc=document.createElement('button'); bc.className='btn ghost'; bc.style.padding='4px 10px'; bc.textContent='取消'; bc.onclick=renderLabs;
+  tdOps.append(bs,bc);
 }
 async function updateLab(id){
   const tr=document.querySelector(`tr[data-lab-id="${id}"]`);
