@@ -28,6 +28,7 @@ from rule_engine.engine import (  # noqa: E402
     SEVERITY_MINOR, SEVERITY_MAJOR)
 from video.processor import InspectionPipeline, process_image, process_video  # noqa: E402
 from backend import database as db  # noqa: E402
+from backend.config import config  # noqa: E402  # 模型选择与正式系统同源：优先 labppe_v8s.pt，缺失回退 SH17
 
 TEST_DIR = ROOT / "data" / "test"
 RESULTS = []
@@ -52,7 +53,8 @@ def main():
     print("时间:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print("=" * 62)
 
-    detector = PPEDetector(ROOT / "ai" / "model" / "sh17_yolov8s.pt")
+    detector = PPEDetector(config.MODEL_PATH)
+    print(f"使用模型: {Path(detector.weights_path).name}")
     print(f"模型设备: {detector.device_name}\n")
     pipeline = InspectionPipeline(detector=detector)
     engine = SafetyRuleEngine()
@@ -255,13 +257,27 @@ def main():
            len(rows2) >= 0)
 
     # T14 数据统计
+    # dashboard_stats() 只统计"今日"数据，直接调用会因当天无人使用系统而得到 0，
+    # 结果随运行日期漂移。改为确定性用例：注入今日记录 -> 断言统计>0 -> 清理（同 T12）。
+    rid14 = db.save_detection_record(lab_id, "image", "t14_stats", 1, 1, 0, img_ms)
+    db.save_violation_events(rid14, lab_id, [ViolationEvent(
+        person_id=1, area_name="实验操作区", violation_types=["未佩戴口罩"],
+        missing_ppe=["mask"], severity=SEVERITY_MINOR,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        screenshot="t14_stats.jpg")])
     stats = db.dashboard_stats()
     record("T14", "数据统计",
-           "调用 dashboard_stats()",
-           "返回检测数/违规数/违规率/类型分布",
+           "注入今日记录后调用 dashboard_stats()",
+           "返回检测数/违规数/违规率/类型分布且今日计数>0",
            f"检测={stats['detection_count']}, 违规={stats['violation_count']}, "
            f"违规率={stats['violation_rate']}%",
-           stats["detection_count"] > 0)
+           stats["detection_count"] > 0 and stats["violation_count"] > 0)
+    # 清理测试注入数据，避免污染演示数据库
+    conn = db.get_conn()
+    conn.execute("DELETE FROM violation_events WHERE record_id=?", (rid14,))
+    conn.execute("DELETE FROM detection_records WHERE id=?", (rid14,))
+    conn.commit()
+    conn.close()
 
     # ---------- 性能指标 ----------
     print("=" * 62)
@@ -272,7 +288,7 @@ def main():
     print(f"单张图片处理时间: {r['elapsed_ms']} ms（含检测+匹配+规则+绘制+截图判断）")
     print(f"视频处理速度: {vr['video_fps']} FPS (GPU={detector.device_name}, stride=2)")
     # CPU 对照（短视频前 60 帧）
-    detector_cpu = PPEDetector(ROOT / "ai" / "model" / "sh17_yolov8s.pt", device="cpu")
+    detector_cpu = PPEDetector(config.MODEL_PATH, device="cpu")
     cap = cv2.VideoCapture(str(demo_video))
     t0 = time.perf_counter()
     n = 0
@@ -291,7 +307,7 @@ def main():
     passed = sum(1 for x in RESULTS if x["passed"])
     report = ["# 系统测试报告", "",
               f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
-              f"模型: sh17_yolov8s.pt @ {detector.device_name}", "",
+              f"模型: {Path(detector.weights_path).name} @ {detector.device_name}", "",
               f"**通过: {passed}/{len(RESULTS)}**", "",
               "| 用例 | 名称 | 条件 | 期望结果 | 实际结果 | 是否通过 |",
               "| ---- | ---- | ---- | -------- | -------- | -------- |"]
