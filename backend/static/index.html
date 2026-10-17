@@ -175,6 +175,7 @@ label{font-size:13px;color:var(--muted)}
         <label><input type="checkbox" class="s-ppe" value="helmet">安全帽</label>
       </span>
       <button class="btn" onclick="createArea()">创建区域</button>
+      <button class="btn ghost" onclick="restoreDefaultArea()">恢复默认区域</button>
     </div>
     <table><thead><tr><th>区域ID</th><th>名称</th><th>ROI</th><th>必须佩戴</th><th>操作</th></tr></thead><tbody id="s-areas"></tbody></table>
     <div class="hint">提示：上传检测页面选中的实验室若没有配置任何区域，则所有人员都视为处于"普通区域"，不会触发 PPE 违规判断。</div>
@@ -474,10 +475,16 @@ function renderAreas(s){
   if(!lab)return;
   const tb=$('s-areas'); tb.innerHTML='';
   lab.areas.forEach(a=>{
-    tb.insertAdjacentHTML('beforeend',`<tr><td>${a.id}</td><td>${a.name}</td>
-      <td>(${a.x1},${a.y1}) ~ (${a.x2},${a.y2})</td>
-      <td>${a.required_ppe.map(p=>PPE_CN[p]).join('、')}</td>
-      <td><button class="btn danger" style="padding:4px 10px" onclick="deleteArea(${a.id})">删除</button></td></tr>`);
+    const tr=document.createElement('tr');
+    const tdId=document.createElement('td'); tdId.textContent=a.id;
+    const tdName=document.createElement('td'); tdName.textContent=a.name;
+    const tdRoi=document.createElement('td'); tdRoi.textContent=`(${a.x1},${a.y1}) ~ (${a.x2},${a.y2})`;
+    const tdPpe=document.createElement('td'); tdPpe.textContent=a.required_ppe.map(p=>PPE_CN[p]).join('、');
+    const tdOps=document.createElement('td');
+    const bd=document.createElement('button'); bd.className='btn danger'; bd.style.padding='4px 10px'; bd.textContent='删除'; bd.onclick=()=>deleteArea(a.id);
+    tdOps.appendChild(bd);
+    tr.append(tdId,tdName,tdRoi,tdPpe,tdOps);
+    tb.appendChild(tr);
   });
 }
 async function createLab(){
@@ -513,6 +520,17 @@ async function deleteArea(id){
     showToast('区域已删除','success');
     loadSettings();
   }catch(e){/* toast 已显示 */}
+}
+async function restoreDefaultArea(){
+  const labId=$('s-lab').value;
+  if(!labId){showToast('请先选择实验室','warn');return}
+  const lab=settingsCache&&settingsCache.labs.find(l=>l.id==labId);
+  if(!confirm('确认为实验室「'+(lab?lab.name:'')+'」恢复默认区域？\n默认区域为「实验操作区」(0.22,0.18)~(0.88,0.92)，需佩戴口罩/手套/实验服。\n仅当该实验室当前没有任何区域时才会创建；已有配置不会被覆盖。'))return;
+  try{
+    const r=await apiFetch(`/api/settings/lab/${labId}/restore-default-area`,{method:'POST'});
+    showToast(r.created?'默认区域已恢复':'该实验室已存在相同的默认区域，无需恢复','success');
+    loadSettings();
+  }catch(e){/* 409/404 错误 toast 已由 apiFetch 显示 */}
 }
 
 /* ---------- ROI 可视化编辑器 ---------- */
