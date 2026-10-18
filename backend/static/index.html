@@ -231,7 +231,9 @@ function showToast(msg, type='info', duration=3000){
   const c=$('toast-container');
   const t=document.createElement('div');
   t.className='toast '+type;
-  t.innerHTML=msg+'<span class="toast-close" onclick="this.parentElement.remove()">✕</span>';
+  const s=document.createElement('span'); s.textContent=msg;
+  const x=document.createElement('span'); x.className='toast-close'; x.textContent='✕'; x.onclick=()=>t.remove();
+  t.append(s,x);
   c.appendChild(t);
   setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},duration);
 }
@@ -291,6 +293,10 @@ loadDashboard();
 loadSettings();
 
 function sevBadge(s){return s==='严重违规'?'<span class="badge major">严重违规</span>':s==='一般违规'?'<span class="badge minor">一般违规</span>':'<span class="badge ok">正常</span>'}
+/* 用户/数据库可控字段一律经 textContent 或属性赋值进 DOM，禁止拼 HTML */
+function td(text){const d=document.createElement('td');d.textContent=text;return d}
+function badgeTd(s){const d=document.createElement('td');d.innerHTML=sevBadge(s);return d}
+function thumbTd(src){const d=document.createElement('td');if(src){const img=document.createElement('img');img.className='thumb';img.src=src;img.onclick=()=>showLightbox(img.src);d.appendChild(img)}return d}
 const PPE_CN={person:'人员',mask:'口罩',gloves:'手套',lab_coat:'实验服',goggles:'护目镜',helmet:'安全帽'};
 
 async function runInspect(){
@@ -321,10 +327,13 @@ function renderImageResult(r){
   const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
   r.persons.forEach(p=>{
     const ev=r.events.find(e=>e.person_id===p.person_id)||{};
-    tb.insertAdjacentHTML('beforeend',`<tr>
-      <td>人员 ${p.person_id}</td><td>${p.area}${p.in_roi?'':'（普通区域，不评估）'}</td>
-      <td>${Object.keys(p.ppe).map(k=>PPE_CN[k]).join('、')||'<i style="color:var(--muted)">未检测到</i>'}</td>
-      <td>${(ev.violation_types||[]).join('、')||'—'}</td><td>${sevBadge(ev.severity||'正常')}</td></tr>`);
+    const tr=document.createElement('tr');
+    const ppeText=Object.keys(p.ppe).map(k=>PPE_CN[k]).join('、');
+    const tdPpe=document.createElement('td');
+    if(ppeText){tdPpe.textContent=ppeText}else{const i=document.createElement('i');i.style.color='var(--muted)';i.textContent='未检测到';tdPpe.appendChild(i)}
+    tr.append(td('人员 '+p.person_id),td(p.area+(p.in_roi?'':'（普通区域，不评估）')),
+      tdPpe,td((ev.violation_types||[]).join('、')||'—'),badgeTd(ev.severity||'正常'));
+    tb.appendChild(tr);
   });
 }
 
@@ -333,11 +342,11 @@ function renderVideoResult(r){
   $('i-summary').innerHTML=`共 <b>${r.total_frames}</b> 帧（实际推理 ${r.inferred_frames} 帧），处理速度 <b>${r.video_fps} FPS</b>，总耗时 <b>${r.elapsed_s}s</b>，生成违规事件 <b style="color:var(--danger)">${r.violation_count}</b> 个（同类违规每 10 秒记录一次）`;
   const tb=$('i-persons').querySelector('tbody'); tb.innerHTML='';
   r.events.forEach(ev=>{
-    tb.insertAdjacentHTML('beforeend',`<tr>
-      <td>人员 ${ev.person_id}</td><td>${ev.area}</td>
-      <td>${ev.violation_types.join('、')}</td><td>${sevBadge(ev.severity)}</td>
-      <td>视频内 ${ev.frame_time}s</td>
-      <td>${ev.screenshot?`<img class="thumb" src="/media/screenshots/${ev.screenshot}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+    const tr=document.createElement('tr');
+    tr.append(td('人员 '+ev.person_id),td(ev.area),td(ev.violation_types.join('、')),
+      badgeTd(ev.severity),td('视频内 '+ev.frame_time+'s'),
+      thumbTd(ev.screenshot?'/media/screenshots/'+ev.screenshot:null));
+    tb.appendChild(tr);
   });
 }
 
@@ -358,11 +367,11 @@ async function loadViolations(resetPage){
     vState.totalCount=(r.total_count!=null)?r.total_count:r.total;
     const tb=$('v-body'); tb.innerHTML='';
     r.items.forEach(v=>{
-      tb.insertAdjacentHTML('beforeend',`<tr>
-        <td>${v.created_at}</td><td>${v.lab_name||'—'}</td><td>${v.area_name}</td>
-        <td>人员${v.person_id}</td><td>${v.violation_types}</td><td>${sevBadge(v.severity)}</td>
-        <td>${v.frame_time? v.frame_time+'s':'—'}</td>
-        <td>${v.screenshot_url?`<img class="thumb" src="${v.screenshot_url}" onclick="showLightbox(this.src)">`:''}</td></tr>`);
+      const tr=document.createElement('tr');
+      tr.append(td(v.created_at),td(v.lab_name||'—'),td(v.area_name),
+        td('人员'+v.person_id),td(v.violation_types),badgeTd(v.severity),
+        td(v.frame_time?v.frame_time+'s':'—'),thumbTd(v.screenshot_url));
+      tb.appendChild(tr);
     });
     $('v-count').textContent=`共 ${vState.totalCount} 条记录`;
     renderVPager();
