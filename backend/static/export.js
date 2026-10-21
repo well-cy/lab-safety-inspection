@@ -209,6 +209,8 @@
     var m = el('ex-msg');
     if (!m) return;
     m.className = 'ex-msg' + (cls ? ' ' + cls : '');
+    // 注意：本函数允许富文本（需 <span class="ex-count">），
+    // 因此所有来自服务端/浏览器异常的可变文本在传入前必须经 escapeHtml()。
     m.innerHTML = text || '';
   }
 
@@ -300,7 +302,7 @@
         if (!r.ok) {
           return r.json().catch(function () { return {}; }).then(function (j) {
             var msg = (j && j.error) ? j.error : ('导出失败（HTTP ' + r.status + '）');
-            setMsg(msg, 'err');
+            setMsg(escapeHtml(msg), 'err');
             toast(msg, 'error', 6000);
           });
         }
@@ -321,7 +323,7 @@
         });
       })
       .catch(function (e) {
-        setMsg('导出失败：' + e.message, 'err');
+        setMsg('导出失败：' + escapeHtml(e.message), 'err');
         toast('导出失败：' + e.message, 'error');
       })
       .then(function () {
