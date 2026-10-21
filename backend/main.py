@@ -36,7 +36,7 @@ from backend import export as export_api
 from backend import maintenance
 from backend.config import config
 from backend.tasks import QueueFull, TaskManager
-from backend.validators import find_invalid_date, validate_lab_text
+from backend.validators import find_invalid_date, validate_lab_text, validate_video_file
 from rule_engine.engine import SEVERITY_NONE
 
 # 路径与阈值统一来自 backend/config.py（支持 LABSAFETY_* 环境变量覆盖）
@@ -75,9 +75,10 @@ _pipeline_lock = threading.Lock()
 MODEL_PATH = config.MODEL_PATH
 MODEL_DOWNLOAD_HINT = (
     "模型权重不随 git 仓库分发。任选一种获取方式：\n"
-    "  A) 自训 5 类 Lab-PPE 模型（推荐）：放到 ai/model/labppe_v8s.pt，\n"
+    "  A) 自训 6 类 Lab-PPE 模型（推荐，正式主模型）：放到 ai/model/labppe_v8s.pt，\n"
+    "     类别为 person / mask / gloves / lab_coat / goggles / coverall，\n"
     "     由组长/数据集负责人单独分发（见 docs/DEVELOPMENT_GUIDE.md）\n"
-    "  B) SH17 官方权重（17 类，回退方案）：\n"
+    "  B) SH17 官方权重（17 类，仅回退方案）：\n"
     "     curl -L -o ai/model/sh17_yolov8s.pt "
     "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt\n"
     "  也可用 LABSAFETY_MODEL_PATH 环境变量指向任意权重路径。\n"
@@ -178,7 +179,10 @@ def model_info():
         "device": det.device_name,
         "conf_threshold": det.conf_threshold,
         "raw_classes": det.raw_names,
-        "system_classes": ["person", "mask", "gloves", "lab_coat", "goggles", "helmet"],
+        # 系统业务类别与正式主模型 labppe_v8s.pt 的 6 类一致。
+        # 注意 coverall（连体防护服）只是检测证据类，不在 ALLOWED_PPE /
+        # 区域 required_ppe 中（有意设计，改动需走契约评审）。
+        "system_classes": ["person", "mask", "gloves", "lab_coat", "goggles", "coverall"],
     }
 
 
@@ -353,13 +357,15 @@ def detect_video(file: UploadFile = File(...),
     if invalid is not None:
         return invalid
 
-    # 先确认模型可用（缺失时由异常处理器返回 503），避免白存一个临时文件
-    get_pipeline()
-
     save_path = _save_upload(file, "vid", ".mp4")
     if save_path.stat().st_size == 0:
         save_path.unlink(missing_ok=True)
         return bad_request("上传内容为空，请选择有效的视频文件")
+    try:
+        validate_video_file(save_path)
+    except ValueError as exc:
+        save_path.unlink(missing_ok=True)
+        return bad_request(str(exc))
 
     try:
         return run_video_job(save_path, lab_id,
@@ -391,6 +397,11 @@ def detect_video_async(file: UploadFile = File(...),
     if save_path.stat().st_size == 0:
         save_path.unlink(missing_ok=True)
         return bad_request("上传内容为空，请选择有效的视频文件")
+    try:
+        validate_video_file(save_path)
+    except ValueError as exc:
+        save_path.unlink(missing_ok=True)
+        return bad_request(str(exc))
 
     # 闭包捕获本次请求的参数；模型加载放在 worker 内，
     # 这样提交请求能立刻返回，不被 5 秒的模型加载拖住
@@ -492,6 +503,40 @@ async def create_lab(name: str = Form(...), description: str = Form("")):
     except sqlite3.IntegrityError:
         # 只捕获唯一约束冲突；其他异常（如磁盘故障）应保持 5xx 以暴露问题
         return bad_request("实验室名称已存在")
+    return {"ok": True}
+
+
+@app.post("/api/settings/lab/{lab_id}/restore-default-area")
+def restore_default_area(lab_id: int):
+    try:
+        result = db.restore_default_area(lab_id)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    if result is None:
+        return JSONResponse({"error": f"实验室不存在: lab_id={lab_id}"}, status_code=404)
+    return {"ok": True, **result}
+
+
+@app.put("/api/settings/lab/{lab_id}")
+def update_lab(lab_id: int, name: str = Form(...), description: str = Form("")):
+    try:
+        validate_lab_text(name, description)
+        if not db.update_lab(lab_id, name, description):
+            return JSONResponse({"error": f"实验室不存在: lab_id={lab_id}"}, status_code=404)
+    except ValueError as exc:
+        return bad_request(str(exc))
+    except sqlite3.IntegrityError:
+        return bad_request("实验室名称已存在")
+    return {"ok": True}
+
+
+@app.delete("/api/settings/lab/{lab_id}")
+def delete_lab(lab_id: int):
+    try:
+        if not db.delete_lab(lab_id):
+            return JSONResponse({"error": f"实验室不存在: lab_id={lab_id}"}, status_code=404)
+    except ValueError as exc:
+        return bad_request(str(exc))
     return {"ok": True}
 
 

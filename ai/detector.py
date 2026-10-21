@@ -2,11 +2,12 @@
 """
 AI 检测层：封装 YOLO 模型，输出统一的目标检测结果。
 
-底层模型：SH17 数据集官方发布的 YOLOv8s 权重（ultralytics 框架）。
+正式主模型：自训 Lab-PPE 6 类权重 labppe_v8s.pt（ultralytics 框架），
+类别为 person / mask / gloves / lab_coat / goggles / coverall。
+回退模型：SH17 数据集官方 YOLOv8s 权重（仅主模型缺失时使用）。
 本模块负责：
 1. 加载预训练模型
-2. 将 SH17 的 17 个原始类别映射为系统业务类别
-   （person / mask / gloves / lab_coat / goggles / helmet）
+2. 将模型原始类别映射为系统业务类别
 3. 输出统一的 Detection 结构供后续模块使用
 """
 from dataclasses import dataclass, field
@@ -16,13 +17,13 @@ import cv2
 import numpy as np
 
 # ---------- 类别映射 ----------
-# SH17 原始类别（以模型文件内嵌 names 为准）:
+# 以下 SH17 原始类别清单仅适用于回退模型（以模型文件内嵌 names 为准）:
 # person, head, face, glasses, face-mask-medical, face-guard, ear,
 # ear-mufs, hands, gloves, foot, shoes, safety-vest, tools, helmet,
 # medical-suit, safety-suit
 #
-# 系统业务类别（第一版范围）:
-# person, mask, gloves, lab_coat, goggles, helmet
+# 正式主模型 labppe_v8s.pt 的 6 类即系统业务类别:
+# person, mask, gloves, lab_coat, goggles, coverall
 CLASS_ALIAS = {
     "person": "person",
     "head": None, "face": None, "ear": None, "ear-mufs": None,
