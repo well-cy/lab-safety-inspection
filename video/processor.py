@@ -6,6 +6,7 @@
       → 规则引擎 → 画面标注 → 违规截图 → 违规事件
 """
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -49,8 +50,10 @@ def draw_annotations(frame, person_states, events, areas):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_ROI, 1)
 
     event_map = {e.person_id: e for e in events}
-    # person 框
+    # person 框（虚拟聚合人员不画外框，只画其 PPE 框）
     for st in person_states:
+        if getattr(st, "virtual", False):
+            continue
         ev = event_map.get(st.person_id)
         if ev is None:
             color, tag = COLOR_OK, "OK"
@@ -73,11 +76,12 @@ def draw_annotations(frame, person_states, events, areas):
             text = "; ".join(ev.violation_types) + f" [{ev.severity}]"
             cv2.putText(frame, text, (x1, y2 + 42),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-    # PPE 框
+    # PPE 框（小图上 1px 淡色线经 JPEG 压缩后不可见，按图幅自适应加粗）
+    ppe_th = 2 if min(h, w) <= 900 else 1
     for st in person_states:
         for ppe in st.ppe.values():
             x1, y1, x2, y2 = map(int, [ppe.x1, ppe.y1, ppe.x2, ppe.y2])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PPE, 1)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PPE, ppe_th)
             cv2.putText(frame, f"{_cn(ppe.cls_name)} {ppe.conf:.2f}",
                         (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_PPE, 1)
     return frame
@@ -87,9 +91,15 @@ class InspectionPipeline:
     """巡检处理管线：封装 detector + matcher + roi + rule engine"""
 
     def __init__(self, detector: PPEDetector, engine: SafetyRuleEngine | None = None,
-                 screenshot_dir="outputs/screenshots"):
+                 screenshot_dir="outputs/screenshots", tile_recheck: bool = False,
+                 cooldown_s=None):
         self.detector = detector
         self.engine = engine or SafetyRuleEngine()
+        self.tile_recheck = tile_recheck  # 图片模式建议开启（小目标召回），视频模式关闭（性能）
+        # 截图冷却时间：默认沿用模块常量；生产环境由 backend/config.py 注入，
+        # 使其可通过 LABSAFETY_VIOLATION_COOLDOWN_S 环境变量调整。
+        self.cooldown_s = (VIOLATION_COOLDOWN_S if cooldown_s is None
+                           else float(cooldown_s))
         root = Path(__file__).resolve().parent.parent
         self.screenshot_dir = root / screenshot_dir
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +107,7 @@ class InspectionPipeline:
     def analyze_frame(self, frame, areas: list[AreaROI], frame_time=0.0):
         """对单帧执行完整分析，返回 (person_states, events, detections)"""
         h, w = frame.shape[:2]
-        dets = self.detector.detect(frame)
+        dets = self.detector.detect(frame, tile_recheck=self.tile_recheck)
         states = match_person_ppe(dets)
         states = annotate_person_states(states, areas, w, h)
         events = self.engine.evaluate(states, frame_time=frame_time)
@@ -117,12 +127,16 @@ def process_image(pipeline: InspectionPipeline, image_path, areas,
     annotated = draw_annotations(img.copy(), states, events, areas)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
-    # 违规截图
-    for ev in events:
-        if ev.is_violation:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            rel = f"img_{ts}_p{ev.person_id}.jpg"
-            cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
+    # 违规截图：整帧标注图对本次检测内的所有违规人员是同一张，
+    # 因此只落一次盘并复用文件名。
+    # 原实现为每个违规人员各写一份（文件名带 _p{id}），实测一次 7 人检测
+    # 会产生 6 张内容完全相同的图片，纯属磁盘浪费。
+    violating = [ev for ev in events if ev.is_violation]
+    if violating:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        rel = f"img_{ts}.jpg"
+        cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
+        for ev in violating:
             ev.screenshot = rel
     if save_path:
         cv2.imwrite(str(save_path), annotated)
@@ -138,12 +152,25 @@ def process_image(pipeline: InspectionPipeline, image_path, areas,
 
 # ---------------- 视频处理 ----------------
 
+def _report_progress(progress_cb, done: int, total: int) -> None:
+    """上报处理进度；进度回调本身出错不应中断检测，故吞掉异常。"""
+    if progress_cb is None:
+        return
+    try:
+        progress_cb(done, total)
+    except Exception:
+        pass
+
+
 def process_video(pipeline: InspectionPipeline, video_path, areas,
-                  output_path, stride=2, save_annotated=True) -> dict:
+                  output_path, stride=2, save_annotated=True,
+                  progress_cb=None) -> dict:
     """
     处理视频文件。
     stride: 检测帧间隔（每 stride 帧做一次 YOLO 推理，中间帧复用上一次结果，
             保证演示流畅同时提升处理速度）
+    progress_cb: 可选进度回调，签名 progress_cb(已处理帧数, 总帧数)；
+            供后台任务上报进度使用。同步调用时传 None 即可，行为与原来一致。
     运行结束后统计：总帧数、检测帧数、处理 FPS、违规事件（去重后）、标注视频路径。
     """
     t0 = time.perf_counter()
@@ -164,6 +191,7 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     last_states, last_events, last_dets = [], [], []
     last_result = None            # 最近一次检测的原始帧缓存（避免重复推理绘制错位）
     n_frames = n_infer = 0
+    max_persons = 0               # 单帧出现过的最大人数（供落库 person_count 使用）
     cooldown: dict[tuple, float] = {}   # (违规集合) -> 上次截图的视频时间
 
     while True:
@@ -172,9 +200,13 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
             break
         n_frames += 1
         frame_time = n_frames / fps_in
+        # 每 5 帧上报一次进度，避免过于频繁地抢锁
+        if n_frames % 5 == 0:
+            _report_progress(progress_cb, n_frames, total)
         if n_frames % stride == 1 or stride == 1:
             states, events, dets = pipeline.analyze_frame(frame, areas, frame_time)
             last_states, last_events, last_dets = states, events, dets
+            max_persons = max(max_persons, len(states))
             n_infer += 1
         else:
             # 复用上一帧结果（时间戳刷新）
@@ -186,17 +218,19 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
 
         # 事件收集 + 截图（带冷却去重）
         for ev in events:
+            ev.frame_time = frame_time
             if not ev.is_violation:
                 continue
             key = (ev.person_id, tuple(sorted(ev.missing_ppe)))
-            if frame_time - cooldown.get(key, -1e9) >= VIOLATION_COOLDOWN_S:
+            if frame_time - cooldown.get(key, -1e9) >= pipeline.cooldown_s:
                 cooldown[key] = frame_time
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 rel = f"vid_{ts}_p{ev.person_id}.jpg"
                 cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
                 ev.screenshot = rel
                 ev.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                all_events.append(ev)
+                # 缓存事件在抽帧复用时会继续被修改，历史记录必须保存独立快照。
+                all_events.append(deepcopy(ev))
 
         if writer is not None:
             writer.write(annotated)
@@ -204,10 +238,14 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     cap.release()
     if writer is not None:
         writer.release()
+    _report_progress(progress_cb, n_frames, total)   # 收尾再报一次，确保进度到 100%
     elapsed = time.perf_counter() - t0
     return {
         "total_frames": n_frames,
         "inferred_frames": n_infer,
+        # 单帧最大人数：视频响应体不对外暴露该字段，但落库时要用它填
+        # detection_records.person_count（原实现恒填 0，导致库里数据不准）
+        "max_person_count": max_persons,
         "video_fps": round(n_frames / elapsed, 1) if elapsed > 0 else 0,
         "elapsed_s": round(elapsed, 1),
         "events": [e.to_dict() for e in all_events],

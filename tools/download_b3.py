@@ -99,6 +99,10 @@ for i, meta in enumerate(all_imgs, 1):
             else:
                 time.sleep(2 ** attempt)
 
+    if i % 10 == 0 or i == len(all_imgs):
+        print(f"  [{i}/{len(all_imgs)}] 已下载 {stats['img']} / 跳过 {stats['skip']} / 失败 {stats['fail']}",
+              flush=True)
+
 # ---- 3. 汇总 ----
 print("stats:", dict(stats))
 for sp in ("train", "valid", "test"):
