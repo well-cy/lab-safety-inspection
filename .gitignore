@@ -68,3 +68,39 @@ Thumbs.db
 # docs/ 目录若日后需要放文档截图，请新增形如 !docs/assets/*.png 的白名单，
 # 不要删除上面的媒体排除规则。
 .idea/ 
+
+# ===== 编辑器 / IDE =====
+.vscode/
+!.vscode/extensions.json
+*.code-workspace
+
+# ===== 环境变量与本地私有配置（含本机绝对路径，禁止入库） =====
+.env
+.env.*
+*.local
+
+# ===== 压缩包与离线分发包（模型/数据分发件，禁止入库） =====
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.gz
+
+# ===== 表格与办公临时文件 =====
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pptx
+~$*.xlsx
+
+# ===== 运行期临时库文件 =====
+*.db-wal
+*.db-shm
+
+# ===== 交付/审计工作区（体积大、含中间产物，禁止入库） =====
+final_delivery_20261024/
+21_项目最终交付封板_20261024/
+.workbuddy/
+.wb_tmp*/

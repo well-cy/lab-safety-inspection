@@ -29,12 +29,13 @@ Laboratory Safety Intelligent Inspection and Violation Warning System —— MVP
 | ---- | ---- |
 | 图片上传检测（人员+PPE+违规判断+标注） | ✅ 可运行 |
 | 视频上传检测（标注视频输出+违规事件） | ✅ 可运行 |
-| person / mask / gloves / lab_coat / goggles / helmet 检测 | ✅ 可运行（lab_coat 为近似映射，见已知问题） |
+| person / mask / gloves / lab_coat / goggles / coverall 检测 | ✅ 可运行（6 类，见第 3 节"正式主模型"） |
 | 矩形 ROI 区域判断（可配置） | ✅ 可运行 |
 | Person-PPE 空间匹配（多人场景） | ✅ 可运行 |
 | 可配置安全规则引擎（区域级 PPE 要求、违规分级） | ✅ 可运行 |
 | 违规截图保存 + 冷却去重 | ✅ 可运行 |
 | SQLite 违规记录 / 检测记录 | ✅ 可运行 |
+| 违规记录 CSV / Excel 导出（日期·等级·类型·实验室筛选 + 条数预览） | ✅ 可运行 |
 | Web 页面：Dashboard/智能巡检/违规记录/数据统计/系统设置 | ✅ 可运行 |
 | T01~T14 测试用例 + 性能实测 | ✅ 见 tests/test_report.md |
 | 摄像头实时检测 | ⏸ 第二阶段 |
@@ -68,6 +69,21 @@ venv\Scripts\python tests\run_tests.py
 venv\Scripts\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 #   或直接双击 start.bat
 ```
+
+### 数据库自动初始化（无需手工建库）
+
+**首次启动时**，系统会在 `backend/labsafety.db` 自动创建 SQLite 数据库
+（已存在则直接复用，不会覆盖），并自动写入以下默认数据：
+
+| 默认数据 | 内容 |
+| ---- | ---- |
+| 实验室 | `实验室A` |
+| 区域 | `实验操作区`（ROI 矩形，默认覆盖画面中部） |
+| 必戴 PPE 规则 | `mask`（口罩）+ `gloves`（手套）+ `lab_coat`（实验服） |
+
+因此克隆代码后**不需要**任何手工初始化 SQL，启动即可演示。如需恢复默认区域，
+可在**系统设置**页删除现有区域后点击"恢复默认区域"。
+数据库文件不随 Git 分发（`.gitignore` 已排除 `*.db`），删除后重启会自动重建。
 
 访问：**http://127.0.0.1:8000**（接口文档 http://127.0.0.1:8000/docs）
 
@@ -134,7 +150,8 @@ labsafety/
    下方人员明细表
 4. 再上传视频 `data/test/demo_lab_video.mp4` → 等待处理 → 播放标注视频，
    观察"人员从普通区域走入操作区后才开始违规判断"
-5. **违规记录**页：按类型/严重程度/日期筛选，点击缩略图放大查看截图
+5. **违规记录**页：按类型/严重程度/日期筛选，点击缩略图放大查看截图；
+   页面下方"违规记录导出"面板可预览条数并导出 CSV / Excel（详见第 13 节）
 6. **数据统计**页：查看每日违规趋势、各类违规占比、正常/违规比例
 7. **首页 Dashboard**：查看今日检测次数、违规次数、违规率
 
@@ -231,3 +248,30 @@ Precision/Recall/mAP@50/F1。
 - `docs/PROJECT_STATUS.md` —— 当前进展、已知问题、模型情况、明确暂不做的功能
 - `docs/TEAM_DEVELOPMENT_PLAN.md` —— 五人任务分解与排期
 - `docs/PROJECT_HANDOFF_REPORT.md` —— 项目交接审计报告
+
+## 13. 违规记录导出（CSV / Excel）
+
+在 **违规记录页** 下方的"违规记录导出"面板中操作（`backend/static/export.js`
+动态渲染，后端由 `backend/export.py` 提供接口）：
+
+- **导出格式**：CSV（UTF-8 BOM，Excel 打开中文不乱码）/ Excel（.xlsx）
+- **筛选条件**：日期区间（含"近 7 天 / 近 30 天 / 全部时间"快捷区间）、
+  严重程度、违规类型、实验室；支持一键重置
+- **条数预览**：调整筛选条件时实时显示"符合条件 N 条记录可导出"
+- **错误处理**：日期非法、筛选区间倒置、导出内容为空均给出中文提示；
+  服务器未安装 `openpyxl` 时 Excel 选项自动置灰，不会点出 500
+
+相关接口（详见 `docs/API说明.md`）：
+
+| 接口 | 说明 |
+| ---- | ---- |
+| `GET /api/export/violations/count` | 导出前条数预览，返回 `total / max_export_rows / exceed_limit / formats` |
+| `GET /api/export/violations?fmt=csv\|xlsx` | 按当前筛选条件下载文件 |
+
+导出内容与页面所见的违规记录使用**同一套筛选口径**，不会出现"页面看到 3 条、
+导出 8 条"的不一致情况。
+
+## 14. 最终交付说明
+
+正式模型、模型选型依据、Round3 训练与公平评测结论、最终冒烟测试结果、
+已知限制统一记录在 **`docs/FINAL_DELIVERY_20261024.md`**，此处不重复。
