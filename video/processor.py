@@ -6,6 +6,9 @@
       → 规则引擎 → 画面标注 → 违规截图 → 违规事件
 """
 import time
+import os
+import subprocess
+import tempfile
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -183,9 +186,19 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     writer = None
+    intermediate = None
     if save_annotated:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(output_path), fourcc, fps_in, (frame_w, frame_h))
+        # OpenCV's bundled codecs differ across platforms; encode its intermediate
+        # video with the FFmpeg bundled by imageio-ffmpeg for browser playback.
+        fd, intermediate = tempfile.mkstemp(suffix=".mp4", dir=str(Path(output_path).parent))
+        os.close(fd)
+        writer = cv2.VideoWriter(intermediate, cv2.VideoWriter_fourcc(*"mp4v"),
+                                 fps_in, (frame_w, frame_h))
+        if not writer.isOpened():
+            cap.release()
+            writer.release()
+            os.unlink(intermediate)
+            raise RuntimeError("无法创建视频文件，请检查 OpenCV 视频编码支持")
 
     all_events: list[ViolationEvent] = []
     last_states, last_events, last_dets = [], [], []
@@ -194,50 +207,70 @@ def process_video(pipeline: InspectionPipeline, video_path, areas,
     max_persons = 0               # 单帧出现过的最大人数（供落库 person_count 使用）
     cooldown: dict[tuple, float] = {}   # (违规集合) -> 上次截图的视频时间
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        n_frames += 1
-        frame_time = n_frames / fps_in
-        # 每 5 帧上报一次进度，避免过于频繁地抢锁
-        if n_frames % 5 == 0:
-            _report_progress(progress_cb, n_frames, total)
-        if n_frames % stride == 1 or stride == 1:
-            states, events, dets = pipeline.analyze_frame(frame, areas, frame_time)
-            last_states, last_events, last_dets = states, events, dets
-            max_persons = max(max_persons, len(states))
-            n_infer += 1
-        else:
-            # 复用上一帧结果（时间戳刷新）
-            states, events = last_states, last_events
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            n_frames += 1
+            frame_time = n_frames / fps_in
+            # 每 5 帧上报一次进度，避免过于频繁地抢锁
+            if n_frames % 5 == 0:
+                _report_progress(progress_cb, n_frames, total)
+            if n_frames % stride == 1 or stride == 1:
+                states, events, dets = pipeline.analyze_frame(frame, areas, frame_time)
+                last_states, last_events, last_dets = states, events, dets
+                max_persons = max(max_persons, len(states))
+                n_infer += 1
+            else:
+                # 复用上一帧结果（时间戳刷新）
+                states, events = last_states, last_events
+                for ev in events:
+                    ev.frame_time = frame_time
+
+            annotated = draw_annotations(frame.copy(), states, events, areas)
+
+            # 事件收集 + 截图（带冷却去重）
             for ev in events:
                 ev.frame_time = frame_time
+                if not ev.is_violation:
+                    continue
+                key = (ev.person_id, tuple(sorted(ev.missing_ppe)))
+                if frame_time - cooldown.get(key, -1e9) >= pipeline.cooldown_s:
+                    cooldown[key] = frame_time
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    rel = f"vid_{ts}_p{ev.person_id}.jpg"
+                    cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
+                    ev.screenshot = rel
+                    ev.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # 缓存事件在抽帧复用时会继续被修改，历史记录必须保存独立快照。
+                    all_events.append(deepcopy(ev))
 
-        annotated = draw_annotations(frame.copy(), states, events, areas)
+            if writer is not None:
+                writer.write(annotated)
 
-        # 事件收集 + 截图（带冷却去重）
-        for ev in events:
-            ev.frame_time = frame_time
-            if not ev.is_violation:
-                continue
-            key = (ev.person_id, tuple(sorted(ev.missing_ppe)))
-            if frame_time - cooldown.get(key, -1e9) >= pipeline.cooldown_s:
-                cooldown[key] = frame_time
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                rel = f"vid_{ts}_p{ev.person_id}.jpg"
-                cv2.imwrite(str(pipeline.screenshot_dir / rel), annotated)
-                ev.screenshot = rel
-                ev.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # 缓存事件在抽帧复用时会继续被修改，历史记录必须保存独立快照。
-                all_events.append(deepcopy(ev))
-
+    except Exception:
+        cap.release()
         if writer is not None:
-            writer.write(annotated)
+            writer.release()
+            Path(intermediate).unlink(missing_ok=True)
+        raise
 
     cap.release()
     if writer is not None:
         writer.release()
+        try:
+            import imageio_ffmpeg
+            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error",
+                            "-i", intermediate, "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-movflags", "+faststart", str(output_path)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except (ImportError, OSError, subprocess.CalledProcessError) as exc:
+            Path(output_path).unlink(missing_ok=True)
+            raise RuntimeError("视频转换失败，请检查 imageio-ffmpeg 和 H.264 编码器") from exc
+        finally:
+            Path(intermediate).unlink(missing_ok=True)
     _report_progress(progress_cb, n_frames, total)   # 收尾再报一次，确保进度到 100%
     elapsed = time.perf_counter() - t0
     return {
