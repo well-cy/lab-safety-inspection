@@ -11,16 +11,17 @@ Laboratory Safety Intelligent Inspection and Violation Warning System —— MVP
 ## 1. 项目定位
 
 传统实验室安全检查依靠人工巡查：频率有限、无法持续监测、违规发现不及时。
-本系统利用计算机视觉对实验室视频/图片中的人员及安全防护装备（PPE）进行
-检测，结合可配置的实验区域（ROI）与安全规则，自动判断防护装备佩戴违规，
-生成违规事件、保存截图、落库并提供 Web 查询与统计。
+本系统利用计算机视觉对实验室视频、图片及实时摄像头画面中的人员及安全
+防护装备（PPE）进行检测，结合可配置的实验区域（ROI）与安全规则，自动判断
+防护装备佩戴违规，生成违规事件、保存截图、落库并提供 Web 查询与统计。
 
 **系统闭环：**
 
 ```
-图片/视频输入 → YOLO 检测（人员+PPE）→ Person-PPE 空间匹配
+图片 / 视频 / 实时摄像头画面输入 → YOLO 检测（人员+PPE）→ Person-PPE 空间匹配
 → ROI 区域判断 → 安全规则引擎 → 违规事件（截图+分级）
-→ SQLite 存储 → FastAPI + Web 页面（Dashboard/巡检/记录/统计/设置）
+→ SQLite 存储 → FastAPI + Web 页面（Dashboard/巡检/实时巡检/记录/统计/设置）
+→ CSV / XLSX 导出
 ```
 
 ## 2. 当前完成情况（MVP）
@@ -39,7 +40,7 @@ Laboratory Safety Intelligent Inspection and Violation Warning System —— MVP
 | Web 页面：Dashboard/智能巡检/违规记录/数据统计/系统设置 | ✅ 可运行 |
 | T01~T14 测试用例 + 性能实测 | ✅ 见 tests/test_report.md |
 | 电脑摄像头实时巡检（ROI + 多帧平滑 + 连续违规去重） | ✅ 可运行（源码见 `backend/realtime.py`，页面见「实时巡检」页） |
-| 多目标跟踪（tracking） | ⏸ 第二阶段 |
+| 正式多目标跟踪（ByteTrack 等） | ⏸ 第二阶段（实时巡检当前使用 session 内短时 track） |
 | 模型微调（自采数据） | ⏸ 第二阶段 |
 | 用户登录/权限 | ⏸ 暂缓（按范围控制要求） |
 
@@ -123,8 +124,10 @@ labsafety/
 │   └── processor.py           # 图片/视频处理管线 + 标注绘制
 ├── backend/
 │   ├── main.py                # FastAPI 应用
+│   ├── realtime.py            # 实时摄像头巡检后端模块
 │   ├── database.py            # SQLite（5 张表）
-│   └── static/index.html      # Web 前端（单页）
+│   ├── static/index.html      # Web 前端（单页）
+│   └── static/realtime.js     # 浏览器摄像头调用、抽帧、实时结果显示
 ├── data/test/                 # 测试图片(t01~t10) + 演示视频
 ├── outputs/
 │   ├── screenshots/           # 违规截图
@@ -133,6 +136,8 @@ labsafety/
 ├── tests/
 │   ├── run_tests.py           # T01~T14 + 性能实测
 │   ├── make_test_video.py     # 演示视频生成
+│   ├── test_realtime_api.py   # 实时巡检 API 自动化测试
+│   ├── test_realtime_smoothing.py  # 多帧平滑 / 短时 track / 事件去重
 │   └── test_report.md         # 测试报告（运行后生成）
 ├── docs/
 │   ├── 数据来源与开源项目说明.md
@@ -186,6 +191,11 @@ T10 视频检测 / T11 截图保存 / T12 数据库写入 / T13 历史查询 / T
 运行 `venv\Scripts\python tests\run_tests.py` 自动执行并生成
 `tests/test_report.md`（含条件/期望/实际/是否通过 + 性能实测）。
 
+实时巡检功能另增加 API、多帧平滑、短时 track、重复 person 框合并、连续违规
+去重、session 清理等专项自动化测试（`tests/test_realtime_api.py`、
+`tests/test_realtime_smoothing.py`）。当前全量测试结果为
+**57 passed + 19 subtests**。
+
 ## 8. 模型实际效果与性能（本机实测）
 
 > 以下为真实测试结果，未编造。详见 tests/test_report.md。
@@ -219,8 +229,11 @@ Precision/Recall/mAP@50/F1。
    lab_coat 由 medical-suit/safety-suit 映射而来，对宽松白大褂识别可能
    不稳定；正式主模型 `labppe_v8s.pt` 已含真实 lab_coat 类。跨域场景
    （公开工业图）漏检问题仍在跟踪（BugList BUG-005/006）。
-2. **无多目标跟踪**：person_id 是帧内编号，同一人跨帧编号会变化；违规
-   冷却按"缺失组合"全局去重，可能漏记个别人员的独立事件。
+2. **短时跟踪的局限**：实时巡检已实现基于 IoU、中心距离、重复框合并和连续性
+   保护的 session 内短时人员 track，用于多帧平滑和连续违规事件去重；但尚未
+   接入 ByteTrack 等正式多目标跟踪算法。在复杂多人交叉、长时间遮挡或人员离开
+   后重新进入等场景下，人员身份仍可能发生变化。图片和离线视频模式不提供跨帧
+   永久身份识别。
 3. **遮挡/背对/小目标**：PPE 检测依赖可见性，背对镜头的手套无法识别，
    可能产生误报（可用置信度阈值调节权衡）。
 4. **视频同步处理**：上传接口为同步阻塞，长视频需等待；未做上传进度
