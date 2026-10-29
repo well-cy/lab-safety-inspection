@@ -166,6 +166,34 @@ def save_violation_events(record_id, lab_id, events: list,
     conn.close()
 
 
+def update_detection_record_stats(record_id, person_count=None,
+                                  violation_count=None, normal_count=None,
+                                  process_time_ms=None):
+    """
+    回写检测记录的统计字段（实时摄像头巡检用）。
+
+    实时巡检是"一会话多帧"：会话开始时先落一条 detection_records，
+    之后每帧只更新统计，避免每帧产生一条记录把表冲爆。
+    只更新显式传入（非 None）的字段，列名在本函数内硬编码白名单。
+    """
+    sets, args = [], []
+    for col, val in (("person_count", person_count),
+                     ("violation_count", violation_count),
+                     ("normal_count", normal_count),
+                     ("process_time_ms", process_time_ms)):
+        if val is not None:
+            sets.append(f"{col}=?")
+            args.append(val)
+    if not sets:
+        return
+    args.append(record_id)
+    conn = get_conn()
+    conn.execute(f"UPDATE detection_records SET {','.join(sets)} WHERE id=?",
+                 args)
+    conn.commit()
+    conn.close()
+
+
 def save_event_dicts(record_id, lab_id, event_dicts: list):
     """把 process_video 返回的 dict 事件写入数据库"""
     conn = get_conn()

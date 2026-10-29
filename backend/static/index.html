@@ -64,6 +64,12 @@ label{font-size:13px;color:var(--muted)}
 .roi-info{flex:1;min-width:240px}
 .roi-info .coord-row{display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap}
 .roi-info input{width:80px}
+
+/* ---------- 实时摄像头巡检 ---------- */
+.rt-stage{position:relative;width:100%;max-width:960px;background:#1a1a2e;border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+#rt-video{display:block;width:100%;height:auto}
+#rt-overlay{position:absolute;left:0;top:0;width:100%;height:100%}
+.rt-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9aa4b2;font-size:14px}
 </style>
 </head>
 <body>
@@ -77,6 +83,7 @@ label{font-size:13px;color:var(--muted)}
 <nav>
   <button class="active" data-tab="dashboard">📊 首页 Dashboard</button>
   <button data-tab="inspect">🔍 智能巡检</button>
+  <button data-tab="realtime">📷 实时巡检</button>
   <button data-tab="violations">📋 违规记录</button>
   <button data-tab="stats">📈 数据统计</button>
   <button data-tab="settings">⚙️ 系统设置</button>
@@ -111,6 +118,44 @@ label{font-size:13px;color:var(--muted)}
     <div id="i-media"></div>
     <div id="i-summary" style="margin:14px 0"></div>
     <table id="i-persons"><thead><tr id="i-persons-head"><th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>违规类型</th><th>严重程度</th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<!-- 实时摄像头巡检 -->
+<section id="tab-realtime" style="display:none">
+  <div class="card">
+    <h3>实时摄像头巡检（电脑摄像头）</h3>
+    <div class="row">
+      <label>实验室</label><select id="rt-lab"></select>
+      <label>检测间隔</label>
+      <select id="rt-interval">
+        <option value="300">300 ms（约 3.3 FPS）</option>
+        <option value="400" selected>400 ms（约 2.5 FPS）</option>
+        <option value="500">500 ms（约 2 FPS）</option>
+        <option value="800">800 ms（低配电脑）</option>
+      </select>
+      <button class="btn" id="rt-start">开启实时巡检</button>
+      <button class="btn danger" id="rt-stop" disabled>停止巡检</button>
+      <span class="loading" id="rt-hint">点击「开启实时巡检」后，浏览器会请求摄像头权限，请选择允许。</span>
+    </div>
+    <div class="rt-stage">
+      <video id="rt-video" autoplay muted playsinline></video>
+      <canvas id="rt-overlay"></canvas>
+      <div class="rt-placeholder" id="rt-placeholder">摄像头未开启 · 点击「开启实时巡检」开始</div>
+    </div>
+    <div class="grid" style="margin-top:14px">
+      <div class="stat blue"><div class="label">摄像头状态</div><div class="num" style="font-size:17px" id="rt-cam-status">未开启</div></div>
+      <div class="stat blue"><div class="label">单帧检测耗时</div><div class="num" style="font-size:17px" id="rt-detect-status">未开始</div></div>
+      <div class="stat"><div class="label">当前人数</div><div class="num" id="rt-person-count">0</div></div>
+      <div class="stat"><div class="label">当前违规状态</div><div class="num" style="font-size:20px" id="rt-violation-status">-</div></div>
+      <div class="stat"><div class="label">实际检测帧率 FPS</div><div class="num" id="rt-fps">-</div></div>
+      <div class="stat"><div class="label">本次已记录违规</div><div class="num" id="rt-session-vio">0</div></div>
+      <div class="stat blue"><div class="label">稳定判定（多帧平滑）</div><div class="num" style="font-size:16px" id="rt-smooth-status">-</div></div>
+    </div>
+    <div class="hint">
+      蓝色虚线矩形为实验操作区（ROI，在系统设置中按固定摄像头视角预先配置）。只有人员中心点进入 ROI 才按该区域的 PPE 规则判定；区域外人员不判定违规。检测框：绿色=合规，橙色=一般违规，红色=严重违规，灰色=区域外。<b>实时画面上叠加的检测框是单帧模型的原始结果；而「缺失 PPE / 违规等级 / 是否记录违规」以最近 5 帧多数投票后的稳定状态为准</b>，避免单帧误检导致状态来回跳变。同一人员在同一区域内持续违规期间仅记录 1 次；连续多帧确认恢复正常后，若再次发生违规，则生成新的违规记录。违规截图与记录可在「违规记录」页查看并参与统计与导出。
+    </div>
+    <table id="rt-persons" style="margin-top:12px"><thead><tr><th>人员</th><th>所在区域</th><th>已检测到 PPE</th><th>缺失 PPE</th><th>状态</th></tr></thead><tbody></tbody></table>
   </div>
 </section>
 
@@ -221,6 +266,8 @@ label{font-size:13px;color:var(--muted)}
 
 <!-- 成员5 导出功能入口（若存在则加载） -->
 <script src="/static/export.js"></script>
+<!-- 实时摄像头巡检（独立脚本，挂载到 #tab-realtime） -->
+<script src="/static/realtime.js"></script>
 
 <script>
 const $=id=>document.getElementById(id);
