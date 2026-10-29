@@ -10,6 +10,8 @@ API 概览：
   GET  /api/violations        违规记录查询（支持筛选）
   POST /api/detect/image      上传图片 → 检测 + 违规判断
   POST /api/detect/video      上传视频 → 检测 + 违规判断
+  POST /api/realtime/detect   摄像头单帧 → 实时巡检（详见 backend/realtime.py）
+  POST /api/realtime/stop     结束实时巡检会话
   POST /api/detect/video/async 上传视频 → 后台任务（返回 task_id）
   GET  /api/tasks             后台任务列表
   GET  /api/tasks/{task_id}   后台任务进度/结果
@@ -34,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import database as db
 from backend import export as export_api
 from backend import maintenance
+from backend import realtime as realtime_api
 from backend.config import config
 from backend.tasks import QueueFull, TaskManager
 from backend.validators import find_invalid_date, validate_lab_text, validate_video_file
@@ -146,6 +149,12 @@ def startup():
 
 # ---------- 导出功能（独立模块 backend/export.py） ----------
 app.include_router(export_api.router)
+
+# ---------- 实时摄像头巡检（独立模块 backend/realtime.py） ----------
+# 注入与图片/视频检测**同一个**模型管线获取函数，保证实时巡检与既有检测
+# 使用同一套 YOLO 推理、person-PPE 关联、ROI、规则引擎与冷却去重逻辑。
+realtime_api.init_realtime(get_pipeline)
+app.include_router(realtime_api.router)
 
 
 # ---------- 静态资源 ----------
